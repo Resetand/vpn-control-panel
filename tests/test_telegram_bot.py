@@ -1,0 +1,360 @@
+from __future__ import annotations
+
+import base64
+import json
+import tarfile
+from io import BytesIO
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+import vpn_control_plane.data.backup as backup_module
+from vpn_control_plane.config import Settings
+from vpn_control_plane.data import ClientRecord, JsonStateStore, build_data_backup
+from vpn_control_plane.provisioning import ProvisioningResult
+from vpn_control_plane.subscription import SubscriptionService
+from vpn_control_plane.telegram.bot import (
+    DEFAULT_MANUAL_CLIENT_COMMENT,
+    TelegramBotServices,
+    command_argument,
+    generate_qr_png,
+    handle_announce,
+    handle_backup,
+    handle_issue,
+    handle_set_routing,
+    handle_start,
+    handle_unannounce,
+    is_admin,
+    is_allowed_user,
+    is_valid_happ_routing,
+)
+
+JsonObject = dict[str, Any]
+
+
+def write_json(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def prepare_store(tmp_path: Path, *, subscription: JsonObject | None = None) -> JsonStateStore:
+    write_json(tmp_path / "nodes.json", [])
+    write_json(tmp_path / "clients.json", [])
+    write_json(tmp_path / "inbounds.json", [])
+    write_json(tmp_path / "subscription.json", subscription or {})
+    return JsonStateStore(tmp_path)
+
+
+def settings(
+    tmp_path: Path,
+    *,
+    backup_secrets_ssh_key: str | None = None,
+    backup_secrets_env_file: Path | None = None,
+) -> Settings:
+    values = {
+        "VPN_DATA_DIR": str(tmp_path),
+        "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+        "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+        "VPN_TELEGRAM_BOT_TOKEN": "token",
+        "VPN_ALLOWED_TELEGRAM_IDS": "100,200",
+        "VPN_ADMIN_TELEGRAM_IDS": "1",
+    }
+    if backup_secrets_ssh_key is not None:
+        values["BACKUP_SECRETS_SSH_KEY"] = backup_secrets_ssh_key
+    if backup_secrets_env_file is not None:
+        values["BACKUP_SECRETS_ENV_FILE"] = str(backup_secrets_env_file)
+    return Settings.model_validate(values)
+
+
+class FakeUser:
+    def __init__(self, user_id: int, *, first_name: str = "Kirill", username: str | None = "resetand") -> None:
+        self.id = user_id
+        self.first_name = first_name
+        self.username = username
+
+
+class FakeChat:
+    def __init__(self, chat_type: str = "private") -> None:
+        self.type = chat_type
+
+
+class FakeMessage:
+    def __init__(self, text: str, user_id: int, *, chat_type: str = "private") -> None:
+        self.text = text
+        self.from_user = FakeUser(user_id)
+        self.chat = FakeChat(chat_type)
+        self.answers: list[dict[str, Any]] = []
+        self.photos: list[dict[str, Any]] = []
+        self.documents: list[dict[str, Any]] = []
+
+    async def answer(self, text: str, **kwargs: Any) -> None:
+        self.answers.append({"text": text, "kwargs": kwargs})
+
+    async def answer_photo(self, photo: object, **kwargs: Any) -> None:
+        self.photos.append({"photo": photo, "kwargs": kwargs})
+
+    async def answer_document(self, document: object, **kwargs: Any) -> None:
+        self.documents.append({"document": document, "kwargs": kwargs})
+
+
+class FakeProvisioning:
+    def __init__(self) -> None:
+        self.telegram_calls: list[dict[str, Any]] = []
+        self.issue_calls: list[str] = []
+
+    async def ensure_telegram_user(
+        self,
+        telegram_user_id: int,
+        *,
+        comment: str,
+        username: str | None,
+    ) -> ProvisioningResult:
+        self.telegram_calls.append({"id": telegram_user_id, "comment": comment, "username": username})
+        return ProvisioningResult(client=ClientRecord(id=str(telegram_user_id), comment=comment), created=1, reused=0)
+
+    async def issue_manual_client(self, *, comment: str) -> ProvisioningResult:
+        self.issue_calls.append(comment)
+        return ProvisioningResult(client=ClientRecord(id="manual-1", comment=comment), created=1, reused=0)
+
+
+def services(
+    tmp_path: Path,
+    provisioning: FakeProvisioning | None = None,
+    *,
+    app_settings: Settings | None = None,
+) -> TelegramBotServices:
+    store = prepare_store(tmp_path)
+    app_settings = app_settings or settings(tmp_path)
+    return TelegramBotServices(
+        settings=app_settings,
+        provisioning=cast(Any, provisioning or FakeProvisioning()),
+        subscription=SubscriptionService(store, public_base_url=app_settings.public_subscription_base_url),
+        store=store,
+    )
+
+
+def test_access_control_helpers(tmp_path: Path) -> None:
+    app_settings = settings(tmp_path)
+
+    assert is_admin(app_settings, 1)
+    assert is_allowed_user(app_settings, 1)
+    assert is_allowed_user(app_settings, 100)
+    assert not is_allowed_user(app_settings, 999)
+
+
+def test_command_argument_parsing() -> None:
+    assert command_argument("/issue Router kitchen") == "Router kitchen"
+    assert command_argument("/issue") == ""
+    assert command_argument(None) == ""
+
+
+def test_qr_png_is_generated() -> None:
+    png = generate_qr_png("https://example.test/sub/100")
+
+    assert png.startswith(b"\x89PNG")
+
+
+def valid_routing() -> str:
+    payload = base64.b64encode(b'{"Name":"RU Direct"}').decode("ascii").rstrip("=")
+    return f"happ://routing/onadd/{payload}"
+
+
+def test_routing_validation_accepts_happ_routing_with_base64_json() -> None:
+    assert is_valid_happ_routing(valid_routing())
+    assert is_valid_happ_routing(valid_routing().replace("onadd", "add"))
+
+
+def test_routing_validation_rejects_wrong_prefix_or_invalid_payload() -> None:
+    assert not is_valid_happ_routing("https://example.test/routing")
+    assert not is_valid_happ_routing("happ://routing/onadd/not-json")
+    assert not is_valid_happ_routing("happ://routing/onadd/eyJicm9rZW4i")
+
+
+def test_build_data_backup_contains_only_control_plane_json_files(tmp_path: Path) -> None:
+    store = prepare_store(tmp_path, subscription={"announce": "Maintenance"})
+    write_json(tmp_path / "runtime-cache.json", {"ignored": True})
+
+    backup = build_data_backup(store.data_dir)
+
+    with tarfile.open(fileobj=BytesIO(backup), mode="r:gz") as archive:
+        assert sorted(archive.getnames()) == ["clients.json", "inbounds.json", "nodes.json", "subscription.json"]
+        subscription_file = archive.extractfile("subscription.json")
+        assert subscription_file is not None
+        assert json.loads(subscription_file.read().decode("utf-8")) == {"announce": "Maintenance"}
+
+
+@pytest.mark.asyncio
+async def test_start_denies_unauthorized_user_without_provisioning(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/start", 999)
+
+    await handle_start(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.telegram_calls == []
+    assert message.photos == []
+    assert message.answers[-1]["text"] == "Доступ запрещен. Обратитесь к администратору."
+
+
+@pytest.mark.asyncio
+async def test_start_provisions_allowed_private_user_and_sends_url_qr_and_instructions(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/start", 100)
+
+    await handle_start(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
+    assert len(message.photos) == 1
+    assert "https://example.test/sub/100" in message.photos[0]["kwargs"]["caption"]
+    assert message.answers[-1]["kwargs"] == {"parse_mode": "HTML", "disable_web_page_preview": True}
+
+
+@pytest.mark.asyncio
+async def test_start_in_group_chat_does_not_send_subscription_material(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/start", 100, chat_type="group")
+
+    await handle_start(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.telegram_calls == []
+    assert message.photos == []
+    assert message.answers == [{"text": "Напишите мне в личные сообщения, чтобы получить VPN-доступ.", "kwargs": {}}]
+
+
+@pytest.mark.asyncio
+async def test_issue_is_admin_only_and_does_not_mutate_for_non_admin(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/issue Router kitchen", 100)
+
+    await handle_issue(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.issue_calls == []
+    assert message.photos == []
+    assert message.answers == [{"text": "Доступ запрещен.", "kwargs": {}}]
+
+
+@pytest.mark.asyncio
+async def test_issue_creates_manual_client_with_comment_and_sends_material(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/issue Router kitchen", 1)
+
+    await handle_issue(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.issue_calls == ["Router kitchen"]
+    assert "https://example.test/sub/manual-1" in message.photos[0]["kwargs"]["caption"]
+
+
+@pytest.mark.asyncio
+async def test_issue_without_comment_uses_safe_default(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/issue", 1)
+
+    await handle_issue(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.issue_calls == [DEFAULT_MANUAL_CLIENT_COMMENT]
+
+
+@pytest.mark.asyncio
+async def test_announce_and_unannounce_mutate_subscription_metadata(tmp_path: Path) -> None:
+    bot_services = services(tmp_path)
+
+    await handle_announce(cast(Any, FakeMessage("/announce Maintenance tonight", 1)), bot_services)
+    assert bot_services.store.load_subscription().announce == "Maintenance tonight"
+
+    await handle_unannounce(cast(Any, FakeMessage("/unannounce", 1)), bot_services)
+    assert bot_services.store.load_subscription().announce is None
+
+
+@pytest.mark.asyncio
+async def test_announce_is_admin_only_and_requires_text(tmp_path: Path) -> None:
+    bot_services = services(tmp_path)
+    non_admin_message = FakeMessage("/announce No", 100)
+
+    await handle_announce(cast(Any, non_admin_message), bot_services)
+    assert bot_services.store.load_subscription().announce is None
+    assert non_admin_message.answers == [{"text": "Доступ запрещен.", "kwargs": {}}]
+
+    admin_message = FakeMessage("/announce", 1)
+    await handle_announce(cast(Any, admin_message), bot_services)
+    assert admin_message.answers == [{"text": "Укажите текст объявления: /announce <text>", "kwargs": {}}]
+
+
+@pytest.mark.asyncio
+async def test_backup_is_admin_only_private_and_sends_archive(tmp_path: Path) -> None:
+    bot_services = services(tmp_path)
+    non_admin_message = FakeMessage("/backup", 100)
+    group_message = FakeMessage("/backup", 1, chat_type="group")
+    admin_message = FakeMessage("/backup", 1)
+
+    await handle_backup(cast(Any, non_admin_message), bot_services)
+    await handle_backup(cast(Any, group_message), bot_services)
+    await handle_backup(cast(Any, admin_message), bot_services)
+
+    assert non_admin_message.documents == []
+    assert non_admin_message.answers == [{"text": "Доступ запрещен.", "kwargs": {}}]
+    assert group_message.documents == []
+    assert group_message.answers == [
+        {"text": "Напишите мне в личные сообщения, чтобы получить VPN-доступ.", "kwargs": {}}
+    ]
+    assert len(admin_message.documents) == 1
+    assert admin_message.documents[0]["kwargs"] == {"caption": "Бекап данных control-plane."}
+
+
+@pytest.mark.asyncio
+async def test_backup_sends_encrypted_secrets_archive_when_ssh_key_is_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("VPN_TELEGRAM_BOT_TOKEN=secret\n", encoding="utf-8")
+    monkeypatch.setattr(backup_module, "encrypt_for_ssh_public_key", lambda _plaintext, _key: b"encrypted-secrets")
+    app_settings = settings(
+        tmp_path,
+        backup_secrets_ssh_key="ssh-ed25519 AAAATEST backup",
+        backup_secrets_env_file=env_file,
+    )
+    bot_services = services(tmp_path, app_settings=app_settings)
+    admin_message = FakeMessage("/backup", 1)
+
+    await handle_backup(cast(Any, admin_message), bot_services)
+
+    assert len(admin_message.documents) == 2
+    assert admin_message.documents[0]["document"].filename == "vpn-control-plane-data.tar.gz"
+    assert admin_message.documents[1]["document"].filename == "backup.secrets"
+    assert admin_message.documents[1]["kwargs"] == {"caption": "Зашифрованный бекап секретов."}
+
+
+@pytest.mark.asyncio
+async def test_set_routing_is_admin_only_and_persists_valid_routing(tmp_path: Path) -> None:
+    bot_services = services(tmp_path)
+    routing = valid_routing()
+    non_admin_message = FakeMessage(f"/set-routing {routing}", 100)
+    admin_message = FakeMessage(f"/set-routing {routing}", 1)
+
+    await handle_set_routing(cast(Any, non_admin_message), bot_services)
+    assert bot_services.store.load_subscription().routing is None
+    assert non_admin_message.answers == [{"text": "Доступ запрещен.", "kwargs": {}}]
+
+    await handle_set_routing(cast(Any, admin_message), bot_services)
+    assert bot_services.store.load_subscription().routing == routing
+    assert admin_message.answers == [{"text": "Routing обновлен.", "kwargs": {}}]
+
+
+@pytest.mark.asyncio
+async def test_set_routing_rejects_missing_or_invalid_routing_without_mutating_state(tmp_path: Path) -> None:
+    bot_services = services(tmp_path)
+    missing_message = FakeMessage("/set-routing", 1)
+    invalid_message = FakeMessage("/set-routing happ://routing/onadd/not-json", 1)
+
+    await handle_set_routing(cast(Any, missing_message), bot_services)
+    await handle_set_routing(cast(Any, invalid_message), bot_services)
+
+    assert bot_services.store.load_subscription().routing is None
+    assert missing_message.answers == [
+        {"text": "Укажите routing строку: /set-routing happ://routing/onadd/<base64-json>", "kwargs": {}}
+    ]
+    assert invalid_message.answers == [
+        {
+            "text": "Routing строка невалидна: ожидается happ://routing/onadd или happ://routing/add с base64 JSON.",
+            "kwargs": {},
+        }
+    ]

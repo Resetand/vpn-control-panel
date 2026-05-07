@@ -1,0 +1,47 @@
+services:
+  app:
+    build:
+      context: .
+      target: app
+    env_file:
+      - ${VPN_ENV_FILE:-.env}
+    environment:
+      VPN_DATA_DIR: /app/data
+    ports:
+      - "${VPN_HOST_HTTP_BIND:-127.0.0.1}:${VPN_HOST_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ${VPN_ENV_FILE:-.env}:/app/.env:ro
+      - ${VPN_HOST_DATA_DIR:-./data}:/app/data
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - app
+    env_file:
+      - ${VPN_ENV_FILE:-.env}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - . /etc/nginx/subscription-env.sh && exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    ports:
+      - "${VPN_SUBSCRIPTION_PORT:-443}:${VPN_SUBSCRIPTION_PORT:-443}"
+    volumes:
+      - ./nginx/templates/subscription.conf.esh:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/subscription-env.sh:/etc/nginx/subscription-env.sh:ro
+      - ${VPN_SUBSCRIPTION_CERT_PATH:?set VPN_SUBSCRIPTION_CERT_PATH in .env}:/etc/nginx/certs:ro
+    restart: unless-stopped
+
+  dev:
+    build:
+      context: .
+      target: dev
+    env_file:
+      - ${VPN_ENV_FILE:-.env}
+    environment:
+      VPN_DATA_DIR: /app/data
+    volumes:
+      - .:/app
+      - ${VPN_HOST_DATA_DIR:-./data}:/app/data
+    profiles:
+      - dev

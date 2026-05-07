@@ -1,0 +1,27 @@
+/tmp
+/data
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Local environment and runtime output
+.env
+.venv/
+venv/
+*.log
+backups/
+*.tar
+*.tar.gz
+*.zip
+
+# Ignore openspec design and task files
+/openspec

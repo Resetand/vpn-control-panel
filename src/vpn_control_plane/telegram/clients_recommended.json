@@ -1,0 +1,22 @@
+{
+  "ios": {
+    "platform": "iOS (iPhone, iPad)",
+    "name": "Happ",
+    "url": "https://apps.apple.com/ru/app/id6746188973"
+  },
+  "android": {
+    "platform": "Android",
+    "name": "Happ",
+    "url": "https://play.google.com/store/apps/details?id=com.happproxy"
+  },
+  "windows": {
+    "platform": "Windows",
+    "name": "Happ",
+    "url": "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe"
+  },
+  "macos": {
+    "platform": "MacOS (MacBook, iMac)",
+    "name": "Happ",
+    "url": "https://apps.apple.com/ru/app/id6746188973"
+  }
+}
