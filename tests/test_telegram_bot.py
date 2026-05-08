@@ -57,6 +57,7 @@ def settings(
         "VPN_DATA_DIR": str(tmp_path),
         "VPN_SUBSCRIPTION_ROUTE": "/sub/",
         "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+        "VPN_SUBSCRIPTION_PORT": "443",
         "VPN_TELEGRAM_BOT_TOKEN": "token",
         "VPN_TELEGRAM_ALLOWED_USER_IDS": "100,200",
         "VPN_TELEGRAM_ADMIN_IDS": "1",
@@ -160,7 +161,9 @@ def test_start_access_policy_denies_all_when_allowed_users_are_unset(tmp_path: P
         {
             "VPN_DATA_DIR": str(tmp_path),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ALLOWED_USER_IDS": "",
             "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
     )

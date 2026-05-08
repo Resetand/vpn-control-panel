@@ -7,11 +7,19 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
+def _strip_wrapping_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1].strip()
+    return value
+
+
 def _split_csv(value: object) -> set[str]:
     if value is None:
         return set()
     if isinstance(value, str):
-        return {item.strip() for item in value.split(",") if item.strip()}
+        normalized = _strip_wrapping_quotes(value)
+        return {_strip_wrapping_quotes(item) for item in normalized.split(",") if _strip_wrapping_quotes(item)}
     if isinstance(value, (list, tuple, set, frozenset)):
         return {str(item).strip() for item in value if str(item).strip()}
     if isinstance(value, (int, float, bool)):
@@ -22,7 +30,7 @@ def _split_csv(value: object) -> set[str]:
 
 
 def _split_csv_or_wildcard(value: object) -> set[str] | None:
-    if isinstance(value, str) and value.strip() == "*":
+    if isinstance(value, str) and _strip_wrapping_quotes(value) == "*":
         return None
     return _split_csv(value)
 
@@ -76,7 +84,7 @@ class Settings(BaseSettings):
     def normalize_backup_secrets_ssh_key(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
+        value = _strip_wrapping_quotes(value)
         return value or None
 
     @field_validator("telegram_allowed_user_ids", mode="before")
