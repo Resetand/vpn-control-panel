@@ -120,7 +120,7 @@ def test_subscription_endpoint_settings_normalize_route_and_derive_public_base_u
             "VPN_SUBSCRIPTION_DOMAIN": "resetand.my.id",
             "VPN_SUBSCRIPTION_PORT": "2096",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
-            "VPN_ADMIN_TELEGRAM_IDS": "1",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
     )
 
@@ -290,7 +290,7 @@ def test_subscription_route_returns_404_for_unknown_client(tmp_path: Path) -> No
             "VPN_SUBSCRIPTION_ROUTE": "/legacy-sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
-            "VPN_ADMIN_TELEGRAM_IDS": "1",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
     )
     app = FastAPI()
@@ -308,7 +308,7 @@ def test_create_app_exposes_health_after_configuration_and_state_load(tmp_path: 
             "VPN_DATA_DIR": str(tmp_path),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
-            "VPN_ADMIN_TELEGRAM_IDS": "1",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
     )
 
@@ -324,7 +324,7 @@ def test_create_app_fails_before_serving_when_required_state_is_missing(tmp_path
             "VPN_DATA_DIR": str(tmp_path),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
-            "VPN_ADMIN_TELEGRAM_IDS": "1",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
     )
 
@@ -340,7 +340,7 @@ def test_backup_endpoint_requires_token_and_returns_control_plane_json_archive(t
             "VPN_DATA_DIR": str(tmp_path),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
-            "VPN_ADMIN_TELEGRAM_IDS": "1",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
             "BACKUP_HTTP_TOKEN": "backup-secret",
         }
     )
@@ -369,7 +369,7 @@ def test_backup_endpoint_is_disabled_without_configured_token(tmp_path: Path) ->
             "VPN_DATA_DIR": str(tmp_path),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
-            "VPN_ADMIN_TELEGRAM_IDS": "1",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
     )
 

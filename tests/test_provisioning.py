@@ -131,6 +131,7 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
     assert clients[1].added[0][1]["email"] == "1_123"
     assert clients[1].added[0][1]["subId"] == "123"
     assert clients[1].added[0][1]["tgId"] == 123
+    assert clients[1].added[0][1]["flow"] == "xtls-rprx-vision"
     assert clients[2].added[0][1]["email"] == "2_123"
     saved = json.loads((tmp_path / "clients.json").read_text(encoding="utf-8"))
     assert saved == [{"id": "123", "comment": "Kirill (@resetand)", "subId": None}]
@@ -215,6 +216,25 @@ async def test_payload_generation_supports_vmess_trojan_and_shadowsocks(tmp_path
     assert shadowsocks["password"] == "11111111-1111-1111-1111-111111111111"
     assert shadowsocks_2022["method"] == ""
     assert shadowsocks_2022["password"] == "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg="
+
+
+@pytest.mark.asyncio
+async def test_vless_flow_is_configurable_and_applies_only_to_tcp_vless(tmp_path: Path) -> None:
+    store = prepare_store(tmp_path)
+    service = ProvisioningService(store, default_vless_flow="custom-flow")
+
+    vless_tcp = service.build_client_payload(inbound(1, "vless"), client_id="c", sub_id="s", comment="C")
+    vless_ws = service.build_client_payload(
+        XuiInbound(2, "vless", {"clients": []}, {"network": "ws"}, {}, {}),
+        client_id="c",
+        sub_id="s",
+        comment="C",
+    )
+    vmess_tcp = service.build_client_payload(inbound(3, "vmess"), client_id="c", sub_id="s", comment="C")
+
+    assert vless_tcp["flow"] == "custom-flow"
+    assert vless_ws["flow"] == ""
+    assert vmess_tcp["flow"] == ""
 
 
 @pytest.mark.asyncio

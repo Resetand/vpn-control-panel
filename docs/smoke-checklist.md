@@ -5,7 +5,7 @@ Use this checklist against a disposable 3x-UI test node before cutover. Run it w
 ## Prerequisites
 
 - `make init` has created `.env` and the runtime data directory.
-- `.env` contains `VPN_SUBSCRIPTION_ROUTE`, `VPN_SUBSCRIPTION_DOMAIN`, `VPN_SUBSCRIPTION_PORT`, `VPN_SUBSCRIPTION_CERT_PATH`, `VPN_TELEGRAM_BOT_TOKEN`, `VPN_ADMIN_TELEGRAM_IDS`, `BACKUP_HTTP_TOKEN`, optional `BACKUP_SECRETS_SSH_KEY`, and every secret referenced by `${{ env.VAR_NAME }}` in JSON data.
+- `.env` contains `VPN_SUBSCRIPTION_ROUTE`, `VPN_SUBSCRIPTION_DOMAIN`, `VPN_SUBSCRIPTION_PORT`, `VPN_SUBSCRIPTION_CERT_PATH`, `VPN_TELEGRAM_BOT_TOKEN`, `VPN_TELEGRAM_ALLOWED_USER_IDS` or `VPN_TELEGRAM_ALLOWED_CHAT_ID`, `VPN_TELEGRAM_ADMIN_IDS`, `VPN_DEFAULT_VLESS_FLOW`, `BACKUP_HTTP_TOKEN`, optional `BACKUP_SECRETS_SSH_KEY`, and every secret referenced by `${{ env.VAR_NAME }}` in JSON data.
 - `VPN_SUBSCRIPTION_CERT_PATH` points to a directory with `fullchain.pem` and `privkey.pem`.
 - `nginx/templates/subscription.conf.esh` is present and `make up` starts the bundled nginx service successfully.
 - `nodes.json` points to the 3x-UI test node and has a working `subscriptionBaseUrl`.

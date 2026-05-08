@@ -5,9 +5,11 @@ import json
 import tarfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from aiogram.enums import ChatMemberStatus
 
 import vpn_control_plane.data.backup as backup_module
 from vpn_control_plane.config import Settings
@@ -56,8 +58,8 @@ def settings(
         "VPN_SUBSCRIPTION_ROUTE": "/sub/",
         "VPN_SUBSCRIPTION_DOMAIN": "example.test",
         "VPN_TELEGRAM_BOT_TOKEN": "token",
-        "VPN_ALLOWED_TELEGRAM_IDS": "100,200",
-        "VPN_ADMIN_TELEGRAM_IDS": "1",
+        "VPN_TELEGRAM_ALLOWED_USER_IDS": "100,200",
+        "VPN_TELEGRAM_ADMIN_IDS": "1",
     }
     if backup_secrets_ssh_key is not None:
         values["BACKUP_SECRETS_SSH_KEY"] = backup_secrets_ssh_key
@@ -117,6 +119,18 @@ class FakeProvisioning:
         return ProvisioningResult(client=ClientRecord(id="manual-1", comment=comment), created=1, reused=0)
 
 
+class FakeBot:
+    def __init__(self, status: ChatMemberStatus | Exception) -> None:
+        self.status = status
+        self.calls: list[dict[str, int]] = []
+
+    async def get_chat_member(self, *, chat_id: int, user_id: int) -> object:
+        self.calls.append({"chat_id": chat_id, "user_id": user_id})
+        if isinstance(self.status, Exception):
+            raise self.status
+        return SimpleNamespace(status=self.status)
+
+
 def services(
     tmp_path: Path,
     provisioning: FakeProvisioning | None = None,
@@ -137,9 +151,36 @@ def test_access_control_helpers(tmp_path: Path) -> None:
     app_settings = settings(tmp_path)
 
     assert is_admin(app_settings, 1)
-    assert is_allowed_user(app_settings, 1)
     assert is_allowed_user(app_settings, 100)
     assert not is_allowed_user(app_settings, 999)
+
+
+def test_start_access_policy_denies_all_when_allowed_users_are_unset(tmp_path: Path) -> None:
+    app_settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+
+    assert not is_allowed_user(app_settings, 1)
+    assert not is_allowed_user(app_settings, 100)
+
+
+def test_start_access_policy_supports_wildcard_allowed_users(tmp_path: Path) -> None:
+    app_settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ALLOWED_USER_IDS": "*",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+
+    assert is_allowed_user(app_settings, 999)
 
 
 def test_command_argument_parsing() -> None:
@@ -206,6 +247,51 @@ async def test_start_provisions_allowed_private_user_and_sends_url_qr_and_instru
     assert len(message.photos) == 1
     assert "https://example.test/sub/100" in message.photos[0]["kwargs"]["caption"]
     assert message.answers[-1]["kwargs"] == {"parse_mode": "HTML", "disable_web_page_preview": True}
+
+
+@pytest.mark.asyncio
+async def test_start_uses_allowed_chat_membership_when_configured(tmp_path: Path) -> None:
+    app_settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ALLOWED_CHAT_ID": "-100123",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/start", 100)
+    bot = FakeBot(ChatMemberStatus.MEMBER)
+
+    await handle_start(cast(Any, message), services(tmp_path, provisioning, app_settings=app_settings), cast(Any, bot))
+
+    assert bot.calls == [{"chat_id": -100123, "user_id": 100}]
+    assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
+
+
+@pytest.mark.asyncio
+async def test_start_denies_non_member_when_allowed_chat_is_configured(tmp_path: Path) -> None:
+    app_settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ALLOWED_CHAT_ID": "-100123",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/start", 100)
+    bot = FakeBot(ChatMemberStatus.LEFT)
+
+    await handle_start(cast(Any, message), services(tmp_path, provisioning, app_settings=app_settings), cast(Any, bot))
+
+    assert provisioning.telegram_calls == []
+    assert message.photos == []
+    assert message.answers[-1]["text"] == "Доступ запрещен. Обратитесь к администратору."
 
 
 @pytest.mark.asyncio

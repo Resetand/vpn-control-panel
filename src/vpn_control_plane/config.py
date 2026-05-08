@@ -15,6 +15,12 @@ def _split_csv(value: str | list[str] | tuple[str, ...] | set[str] | None) -> se
     return {str(item).strip() for item in value if str(item).strip()}
 
 
+def _split_csv_or_wildcard(value: str | list[str] | tuple[str, ...] | set[str] | None) -> set[str] | None:
+    if isinstance(value, str) and value.strip() == "*":
+        return None
+    return _split_csv(value)
+
+
 def normalize_subscription_route(value: str) -> str:
     value = value.strip().strip("/")
     if not value:
@@ -48,8 +54,13 @@ class Settings(BaseSettings):
     )
     subscription_cert_path: Path = Field(default=Path("./certs"), validation_alias="VPN_SUBSCRIPTION_CERT_PATH")
     telegram_bot_token: SecretStr = Field(validation_alias="VPN_TELEGRAM_BOT_TOKEN")
-    allowed_telegram_ids: set[str] = Field(default_factory=set, validation_alias="VPN_ALLOWED_TELEGRAM_IDS")
-    admin_telegram_ids: set[str] = Field(validation_alias="VPN_ADMIN_TELEGRAM_IDS")
+    telegram_allowed_user_ids: set[str] | None = Field(
+        default_factory=set,
+        validation_alias="VPN_TELEGRAM_ALLOWED_USER_IDS",
+    )
+    telegram_allowed_chat_id: int | None = Field(default=None, validation_alias="VPN_TELEGRAM_ALLOWED_CHAT_ID")
+    admin_telegram_ids: set[str] = Field(validation_alias="VPN_TELEGRAM_ADMIN_IDS")
+    default_vless_flow: str = Field(default="xtls-rprx-vision", validation_alias="VPN_DEFAULT_VLESS_FLOW")
     backup_http_token: SecretStr | None = Field(default=None, validation_alias="BACKUP_HTTP_TOKEN")
     backup_secrets_ssh_key: str | None = Field(default=None, validation_alias="BACKUP_SECRETS_SSH_KEY")
     backup_secrets_env_file: Path = Field(default=Path(".env"), validation_alias="BACKUP_SECRETS_ENV_FILE")
@@ -62,10 +73,27 @@ class Settings(BaseSettings):
         value = value.strip()
         return value or None
 
-    @field_validator("allowed_telegram_ids", "admin_telegram_ids", mode="before")
+    @field_validator("telegram_allowed_user_ids", mode="before")
+    @classmethod
+    def parse_allowed_user_ids(cls, value: object) -> set[str] | None:
+        return _split_csv_or_wildcard(value)  # type: ignore[arg-type]
+
+    @field_validator("admin_telegram_ids", mode="before")
     @classmethod
     def parse_id_set(cls, value: object) -> set[str]:
         return _split_csv(value)  # type: ignore[arg-type]
+
+    @field_validator("telegram_allowed_chat_id", mode="before")
+    @classmethod
+    def parse_optional_chat_id(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("default_vless_flow")
+    @classmethod
+    def strip_default_vless_flow(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("subscription_domain")
     @classmethod

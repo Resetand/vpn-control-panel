@@ -47,11 +47,13 @@ class ProvisioningService:
         self,
         store: JsonStateStore,
         *,
+        default_vless_flow: str = "xtls-rprx-vision",
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
         random_bytes: Callable[[int], bytes] = secrets.token_bytes,
     ) -> None:
         self._store = store
+        self._default_vless_flow = default_vless_flow.strip()
         self._node_client_factory = node_client_factory or XuiNodeClient
         self._uuid_factory = uuid_factory
         self._random_bytes = random_bytes
@@ -217,17 +219,11 @@ class ProvisioningService:
             return base64.b64encode(self._random_bytes(key_length)).decode("ascii")
         return str(self._uuid_factory())
 
-    @staticmethod
-    def _vless_flow(inbound: XuiInbound) -> str:
+    def _vless_flow(self, inbound: XuiInbound) -> str:
         network = str(inbound.stream_settings.get("network") or "tcp")
         if network != "tcp":
             return ""
-        clients = inbound.settings.get("clients", [])
-        if isinstance(clients, list):
-            for client in clients:
-                if isinstance(client, dict) and client.get("flow"):
-                    return str(client["flow"])
-        return ""
+        return self._default_vless_flow
 
     def _persist_client_record(
         self,

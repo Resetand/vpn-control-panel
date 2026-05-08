@@ -9,6 +9,7 @@ from io import BytesIO
 
 import qrcode  # type: ignore[import-untyped]
 from aiogram import Bot, Dispatcher
+from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, CommandStart
 from aiogram.types import BufferedInputFile, Message
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MANUAL_CLIENT_COMMENT = "manual"
 ROUTING_PREFIXES = ("happ://routing/onadd/", "happ://routing/add/")
+ALLOWED_CHAT_MEMBER_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,7 @@ class TelegramBotServices:
 def create_services(settings: Settings, store: JsonStateStore) -> TelegramBotServices:
     return TelegramBotServices(
         settings=settings,
-        provisioning=ProvisioningService(store),
+        provisioning=ProvisioningService(store, default_vless_flow=settings.default_vless_flow),
         subscription=SubscriptionService(store, public_base_url=settings.public_subscription_base_url),
         store=store,
     )
@@ -81,18 +83,20 @@ def is_admin(settings: Settings, user_id: int | str) -> bool:
 
 
 def is_allowed_user(settings: Settings, user_id: int | str) -> bool:
+    if settings.telegram_allowed_user_ids is None:
+        return True
     user_id_text = str(user_id)
-    return user_id_text in settings.admin_telegram_ids or user_id_text in settings.allowed_telegram_ids
+    return user_id_text in settings.telegram_allowed_user_ids
 
 
-async def handle_start(message: Message, services: TelegramBotServices) -> None:
+async def handle_start(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
     user = message.from_user
     if user is None:
         return
     if not _is_private_chat(message):
         await message.answer("Напишите мне в личные сообщения, чтобы получить VPN-доступ.")
         return
-    if not is_allowed_user(services.settings, user.id):
+    if not await _is_user_allowed_for_start(services.settings, bot, user.id):
         logger.info("Access denied for /start: user %s is not allowed", user.id)
         await message.answer("Доступ запрещен. Обратитесь к администратору.")
         return
@@ -265,6 +269,27 @@ def command_argument(text: str | None) -> str:
 
 def update_subscription_announcement(current: SubscriptionMetadata, announcement: str | None) -> SubscriptionMetadata:
     return current.model_copy(update={"announce": announcement})
+
+
+async def _is_user_allowed_for_start(settings: Settings, bot: Bot | None, user_id: int) -> bool:
+    if settings.telegram_allowed_chat_id is not None:
+        return await _is_chat_member(bot, user_id, settings.telegram_allowed_chat_id)
+    return is_allowed_user(settings, user_id)
+
+
+async def _is_chat_member(bot: Bot | None, user_id: int, chat_id: int) -> bool:
+    if bot is None:
+        logger.warning("Access denied for user %s: Telegram bot instance is unavailable", user_id)
+        return False
+    try:
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+    except Exception:
+        logger.exception("Failed to check membership for user %s in chat %s", user_id, chat_id)
+        return False
+    if member.status in ALLOWED_CHAT_MEMBER_STATUSES:
+        return True
+    logger.info("Access denied for user %s: status=%s in chat %s", user_id, member.status, chat_id)
+    return False
 
 
 async def _ensure_admin(message: Message, settings: Settings, user_id: int | str, *, command: str) -> bool:

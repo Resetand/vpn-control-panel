@@ -1,6 +1,5 @@
 from vpn_control_plane.telegram.bot import (
 	TelegramBotServices,
-	build_setup_instructions,
 	command_argument,
 	create_bot,
 	create_dispatcher,
@@ -17,6 +16,7 @@ from vpn_control_plane.telegram.bot import (
 	is_valid_happ_routing,
 	run_telegram_bot,
 )
+from vpn_control_plane.telegram.setup_messages import build_setup_instructions
 
 __all__ = [
 	"TelegramBotServices",
