@@ -21,6 +21,7 @@ from vpn_control_plane.telegram.bot import (
     DEFAULT_MANUAL_CLIENT_COMMENT,
     TelegramBotServices,
     command_argument,
+    configure_bot_commands,
     generate_qr_png,
     handle_announce,
     handle_backup,
@@ -133,6 +134,14 @@ class FakeBot:
         return SimpleNamespace(status=self.status)
 
 
+class FakeCommandBot:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def set_my_commands(self, commands: object, *, scope: object) -> None:
+        self.calls.append({"commands": commands, "scope": scope})
+
+
 def services(
     tmp_path: Path,
     provisioning: FakeProvisioning | None = None,
@@ -191,6 +200,26 @@ def test_command_argument_parsing() -> None:
     assert command_argument("/issue Router kitchen") == "Router kitchen"
     assert command_argument("/issue") == ""
     assert command_argument(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_configure_bot_commands_sets_default_and_admin_scoped_menus(tmp_path: Path) -> None:
+    bot = FakeCommandBot()
+
+    await configure_bot_commands(cast(Any, bot), settings(tmp_path))
+
+    assert [command.command for command in bot.calls[0]["commands"]] == ["start"]
+    assert bot.calls[0]["scope"].type == "default"
+    assert [command.command for command in bot.calls[1]["commands"]] == [
+        "start",
+        "issue",
+        "announce",
+        "unannounce",
+        "backup",
+        "set_routing",
+    ]
+    assert bot.calls[1]["scope"].type == "chat"
+    assert bot.calls[1]["scope"].chat_id == 1
 
 
 def test_qr_png_is_generated() -> None:
@@ -440,7 +469,7 @@ async def test_set_routing_rejects_missing_or_invalid_routing_without_mutating_s
 
     assert bot_services.store.load_subscription().routing is None
     assert missing_message.answers == [
-        {"text": "Укажите routing строку: /set-routing happ://routing/onadd/<base64-json>", "kwargs": {}}
+        {"text": "Укажите routing строку: /set_routing happ://routing/onadd/<base64-json>", "kwargs": {}}
     ]
     assert invalid_message.answers == [
         {

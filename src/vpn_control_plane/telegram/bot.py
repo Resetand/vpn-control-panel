@@ -11,7 +11,7 @@ import qrcode  # type: ignore[import-untyped]
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BufferedInputFile, Message
 
 from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
 from vpn_control_plane.config import Settings
@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_MANUAL_CLIENT_COMMENT = "manual"
 ROUTING_PREFIXES = ("happ://routing/onadd/", "happ://routing/add/")
 ALLOWED_CHAT_MEMBER_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
+USER_BOT_COMMANDS = [
+    BotCommand(command="start", description="Получить VPN-доступ"),
+]
+ADMIN_BOT_COMMANDS = [
+    *USER_BOT_COMMANDS,
+    BotCommand(command="issue", description="Создать VPN-клиента"),
+    BotCommand(command="announce", description="Обновить объявление"),
+    BotCommand(command="unannounce", description="Очистить объявление"),
+    BotCommand(command="backup", description="Получить бекап"),
+    BotCommand(command="set_routing", description="Обновить routing"),
+]
 
 
 @dataclass(frozen=True)
@@ -55,7 +66,7 @@ def create_dispatcher(services: TelegramBotServices) -> Dispatcher:
     dispatcher.message.register(handle_announce, Command("announce"))
     dispatcher.message.register(handle_unannounce, Command("unannounce"))
     dispatcher.message.register(handle_backup, Command("backup"))
-    dispatcher.message.register(handle_set_routing, Command("set-routing"))
+    dispatcher.message.register(handle_set_routing, Command("set-routing", "set_routing"))
     return dispatcher
 
 
@@ -67,11 +78,30 @@ async def run_telegram_bot(settings: Settings, store: JsonStateStore) -> None:
     bot = create_bot(settings)
     dispatcher = create_dispatcher(create_services(settings, store))
     try:
+        await configure_bot_commands(bot, settings)
         logger.info("Starting Telegram bot polling")
         await dispatcher.start_polling(bot)
     finally:
         logger.info("Stopping Telegram bot polling")
         await bot.session.close()
+
+
+async def configure_bot_commands(bot: Bot, settings: Settings) -> None:
+    try:
+        await bot.set_my_commands(USER_BOT_COMMANDS, scope=BotCommandScopeDefault())
+    except Exception:
+        logger.exception("Failed to set Telegram default command menu")
+        return
+    for admin_id_text in sorted(settings.admin_telegram_ids):
+        try:
+            admin_id = int(admin_id_text)
+        except ValueError:
+            logger.warning("Skipping Telegram command menu for invalid admin id %r", admin_id_text)
+            continue
+        try:
+            await bot.set_my_commands(ADMIN_BOT_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception:
+            logger.exception("Failed to set Telegram admin command menu for user %s", admin_id)
 
 
 def is_admin(settings: Settings, user_id: int | str) -> bool:
@@ -198,7 +228,7 @@ async def handle_set_routing(message: Message, services: TelegramBotServices) ->
 
     routing = command_argument(message.text)
     if not routing:
-        await message.answer("Укажите routing строку: /set-routing happ://routing/onadd/<base64-json>")
+        await message.answer("Укажите routing строку: /set_routing happ://routing/onadd/<base64-json>")
         return
     if not is_valid_happ_routing(routing):
         await message.answer(

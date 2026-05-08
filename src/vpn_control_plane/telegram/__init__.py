@@ -1,6 +1,7 @@
 from vpn_control_plane.telegram.bot import (
 	TelegramBotServices,
 	command_argument,
+	configure_bot_commands,
 	create_bot,
 	create_dispatcher,
 	create_services,
@@ -22,6 +23,7 @@ __all__ = [
 	"TelegramBotServices",
 	"build_setup_instructions",
 	"command_argument",
+	"configure_bot_commands",
 	"create_bot",
 	"create_dispatcher",
 	"create_services",
