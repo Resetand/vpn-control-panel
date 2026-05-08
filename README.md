@@ -13,7 +13,7 @@ curl -fsSL https://get.docker.com | sudo sh
 Clone the project into the server directory:
 
 ```bash
-git clone https://github.com/resetand/vpn-control-panel.git /opt/vpn-control-panel
+git clone https://github.com/resetand/vpn-control-panel.git /opt/vpn-control-panel && cd /opt/vpn-control-panel
 ```
 
 Initialize files:

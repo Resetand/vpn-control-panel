@@ -17,7 +17,6 @@ class NodeRecord(StateModel):
     username: Annotated[str, Field(min_length=1)]
     password: Annotated[str, Field(min_length=1)]
     two_factor_code: str | None = Field(default=None, alias="twoFactorCode")
-    subscription_base_url: str | None = Field(default=None, alias="subscriptionBaseUrl")
     scheme: Literal["http", "https"] = "https"
     label: str | None = None
 
@@ -30,14 +29,6 @@ class NodeRecord(StateModel):
         if not value.endswith("/"):
             value = f"{value}/"
         return value
-
-    @field_validator("subscription_base_url")
-    @classmethod
-    def normalize_subscription_base_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip().rstrip("/")
-        return value or None
 
     @field_validator("two_factor_code")
     @classmethod
@@ -73,6 +64,15 @@ class NodeInboundRecord(StateModel):
     label: Annotated[str, Field(min_length=1)]
     node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
     inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
+    permanent_client_email: str | None = Field(default=None, alias="permanentClientEmail")
+
+    @field_validator("permanent_client_email")
+    @classmethod
+    def normalize_permanent_client_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 class ExternalInboundRecord(StateModel):

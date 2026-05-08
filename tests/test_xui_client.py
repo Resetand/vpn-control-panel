@@ -69,6 +69,22 @@ async def test_login_posts_credentials_and_two_factor_code() -> None:
 
 
 @pytest.mark.asyncio
+async def test_login_follows_panel_redirect() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if len(paths) == 1:
+            return httpx.Response(307, headers={"location": "/secret-panel/login"})
+        return json_response({"success": True, "msg": "ok"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).login()
+
+    assert paths == ["/secret-panel/login/", "/secret-panel/login"]
+
+
+@pytest.mark.asyncio
 async def test_login_failure_raises_auth_error_without_password() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return json_response({"success": False, "msg": "bad credentials"})
@@ -155,26 +171,10 @@ async def test_add_client_treats_duplicate_email_as_idempotent_after_reread() ->
 
 
 @pytest.mark.asyncio
-async def test_fetch_subscription_links_accepts_base64_and_plain_text() -> None:
+async def test_decode_subscription_lines_accepts_base64_and_plain_text() -> None:
     encoded = base64.b64encode(b"vless://one#One\ntrojan://two#Two\n").decode()
 
     assert decode_subscription_lines(encoded) == ["vless://one#One", "trojan://two#Two"]
     assert decode_subscription_lines("vless://plain#Plain\n") == ["vless://plain#Plain"]
 
 
-@pytest.mark.asyncio
-async def test_fetch_subscription_links_uses_node_subscription_base_url() -> None:
-    seen_urls: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen_urls.append(str(request.url))
-        return httpx.Response(200, text="vless://plain#Plain\n")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        links = await XuiNodeClient(
-            node(subscriptionBaseUrl="https://sub.example.test/sub/"),
-            http_client=http_client,
-        ).fetch_subscription_links("client 1")
-
-    assert seen_urls == ["https://sub.example.test/sub/client%201"]
-    assert links == ["vless://plain#Plain"]

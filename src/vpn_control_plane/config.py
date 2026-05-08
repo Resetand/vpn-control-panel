@@ -4,18 +4,24 @@ from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
-def _split_csv(value: str | list[str] | tuple[str, ...] | set[str] | None) -> set[str]:
+def _split_csv(value: object) -> set[str]:
     if value is None:
         return set()
     if isinstance(value, str):
         return {item.strip() for item in value.split(",") if item.strip()}
-    return {str(item).strip() for item in value if str(item).strip()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return {str(item).strip() for item in value if str(item).strip()}
+    if isinstance(value, (int, float, bool)):
+        text = str(value).strip()
+        return {text} if text else set()
+    text = str(value).strip()
+    return {text} if text else set()
 
 
-def _split_csv_or_wildcard(value: str | list[str] | tuple[str, ...] | set[str] | None) -> set[str] | None:
+def _split_csv_or_wildcard(value: object) -> set[str] | None:
     if isinstance(value, str) and value.strip() == "*":
         return None
     return _split_csv(value)
@@ -54,12 +60,12 @@ class Settings(BaseSettings):
     )
     subscription_cert_path: Path = Field(default=Path("./certs"), validation_alias="VPN_SUBSCRIPTION_CERT_PATH")
     telegram_bot_token: SecretStr = Field(validation_alias="VPN_TELEGRAM_BOT_TOKEN")
-    telegram_allowed_user_ids: set[str] | None = Field(
+    telegram_allowed_user_ids: Annotated[set[str] | None, NoDecode] = Field(
         default_factory=set,
         validation_alias="VPN_TELEGRAM_ALLOWED_USER_IDS",
     )
     telegram_allowed_chat_id: int | None = Field(default=None, validation_alias="VPN_TELEGRAM_ALLOWED_CHAT_ID")
-    admin_telegram_ids: set[str] = Field(validation_alias="VPN_TELEGRAM_ADMIN_IDS")
+    admin_telegram_ids: Annotated[set[str], NoDecode] = Field(validation_alias="VPN_TELEGRAM_ADMIN_IDS")
     default_vless_flow: str = Field(default="xtls-rprx-vision", validation_alias="VPN_DEFAULT_VLESS_FLOW")
     backup_http_token: SecretStr | None = Field(default=None, validation_alias="BACKUP_HTTP_TOKEN")
     backup_secrets_ssh_key: str | None = Field(default=None, validation_alias="BACKUP_SECRETS_SSH_KEY")
@@ -76,12 +82,12 @@ class Settings(BaseSettings):
     @field_validator("telegram_allowed_user_ids", mode="before")
     @classmethod
     def parse_allowed_user_ids(cls, value: object) -> set[str] | None:
-        return _split_csv_or_wildcard(value)  # type: ignore[arg-type]
+        return _split_csv_or_wildcard(value)
 
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod
     def parse_id_set(cls, value: object) -> set[str]:
-        return _split_csv(value)  # type: ignore[arg-type]
+        return _split_csv(value)
 
     @field_validator("telegram_allowed_chat_id", mode="before")
     @classmethod

@@ -31,7 +31,13 @@ def valid_clients() -> list[dict[str, object]]:
 
 def valid_inbounds() -> list[dict[str, object]]:
     return [
-        {"type": "node-inbound", "label": "EU", "nodeId": 1, "inboundId": 1},
+        {
+            "type": "node-inbound",
+            "label": "EU",
+            "nodeId": 1,
+            "inboundId": 1,
+            "permanentClientEmail": "shared-client",
+        },
         {"type": "external-inbound", "label": "Extra", "uri": "vless://example#Extra"},
     ]
 
@@ -47,6 +53,7 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path) -> None:
     assert state.nodes[0].web_base_path == "/panel/"
     assert state.clients[0].effective_sub_id == "legacy-sub-id"
     assert state.inbounds[0].type == "node-inbound"
+    assert state.inbounds[0].permanent_client_email == "shared-client"
     assert state.subscription.profile_title == "base64:VGVzdA=="
     assert state.subscription.routing_enable is True
 

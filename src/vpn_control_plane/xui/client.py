@@ -6,7 +6,6 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
@@ -106,7 +105,7 @@ class XuiNodeClient:
 
         logger.info("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
         try:
-            response = await self._client.post(self._url("/login/"), data=payload)
+            response = await self._client.post(self._url("/login/"), data=payload, follow_redirects=True)
         except Exception:
             logger.exception("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
             raise
@@ -168,22 +167,6 @@ class XuiNodeClient:
                 "but re-read did not find the client"
             )
         raise XuiApiError(f"3x-UI add client failed for node {self.node.id}, inbound {inbound_id}: {message}")
-
-    async def fetch_subscription_links(self, sub_id: str) -> list[str]:
-        operation = "xui.fetch_subscription"
-        if not self.node.subscription_base_url:
-            logger.warning("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
-            raise XuiApiError(f"node {self.node.id} has no subscription base URL configured")
-        url = f"{self.node.subscription_base_url}/{quote(sub_id, safe='')}"
-        logger.info("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
-        try:
-            response = await self._client.get(url)
-            response.raise_for_status()
-        except Exception:
-            logger.exception("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
-            raise
-        logger.info("Finished 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
-        return decode_subscription_lines(response.text)
 
     async def _request_json(self, method: str, path: str, *, operation: str, **kwargs: Any) -> JsonObject:
         response = await self._request(method, path, operation=operation, **kwargs)

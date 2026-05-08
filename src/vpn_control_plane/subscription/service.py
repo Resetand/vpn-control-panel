@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 from fastapi import Response
 
@@ -15,7 +15,7 @@ from vpn_control_plane.data import (
     NodeRecord,
     SubscriptionMetadata,
 )
-from vpn_control_plane.xui import XuiNodeClient
+from vpn_control_plane.xui import XuiNodeClient, build_xui_share_links
 
 
 class SubscriptionError(RuntimeError):
@@ -66,25 +66,31 @@ class SubscriptionService:
             raise UnknownSubscriptionClientError("unknown subscription client")
 
         nodes_by_id = {node.id: node for node in state.nodes}
-        node_links: dict[int, list[str]] = {}
-        used_node_indexes: dict[int, set[int]] = {}
+        node_clients: dict[int, XuiNodeClient] = {}
         node_errors: list[str] = []
         links: list[str] = []
 
-        for inbound in state.inbounds:
-            if isinstance(inbound, ExternalInboundRecord):
-                if inbound.uri.strip():
-                    links.append(inbound.uri.strip())
-                continue
+        try:
+            for inbound in state.inbounds:
+                if isinstance(inbound, ExternalInboundRecord):
+                    if inbound.uri.strip():
+                        links.append(_ensure_fragment_label(inbound.uri.strip(), inbound.label))
+                    continue
 
-            node = nodes_by_id.get(inbound.node_id)
-            if node is None:
-                node_errors.append(f"node {inbound.node_id} is not configured")
-                continue
-            fetched_links = await self._fetch_node_links(node, client.effective_sub_id, node_links, node_errors)
-            selected = _select_node_link(fetched_links, inbound, used_node_indexes.setdefault(inbound.node_id, set()))
-            if selected is not None:
-                links.append(selected)
+                node = nodes_by_id.get(inbound.node_id)
+                if node is None:
+                    node_errors.append(f"node {inbound.node_id} is not configured")
+                    continue
+                node_client = node_clients.get(node.id)
+                if node_client is None:
+                    node_client = self._node_client_factory(node)
+                    node_clients[node.id] = node_client
+                links.extend(await self._build_node_inbound_links(node_client, node, inbound, client, node_errors))
+        finally:
+            for node_client in node_clients.values():
+                close = getattr(node_client, "close", None)
+                if close is not None:
+                    await close()
 
         return BuiltSubscription(
             client=client,
@@ -94,27 +100,34 @@ class SubscriptionService:
             node_errors=tuple(node_errors),
         )
 
-    async def _fetch_node_links(
+    async def _build_node_inbound_links(
         self,
+        xui_client: XuiNodeClient,
         node: NodeRecord,
-        sub_id: str,
-        cache: dict[int, list[str]],
+        inbound: NodeInboundRecord,
+        client: ClientRecord,
         node_errors: list[str],
     ) -> list[str]:
-        if node.id in cache:
-            return cache[node.id]
-        xui_client = self._node_client_factory(node)
         try:
-            links = await xui_client.fetch_subscription_links(sub_id)
+            xui_inbound = await xui_client.get_inbound(inbound.inbound_id)
+            if xui_inbound is None:
+                raise SubscriptionError(f"inbound {inbound.inbound_id} was not found")
+            if not _xui_inbound_is_enabled(xui_inbound.raw.get("enable", True)):
+                return []
+            links = build_xui_share_links(
+                xui_inbound,
+                fallback_address=node.host,
+                sub_id=client.effective_sub_id,
+                client_email=inbound.permanent_client_email,
+                fallback_email=None if inbound.permanent_client_email else f"{inbound.inbound_id}_{client.id}",
+                remark=inbound.label,
+            )
+            if not links:
+                return []
+            return [_ensure_fragment_label(link, inbound.label) for link in links]
         except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
             node_errors.append(f"node {node.id}: {exc}")
-            links = []
-        finally:
-            close = getattr(xui_client, "close", None)
-            if close is not None:
-                await close()
-        cache[node.id] = links
-        return links
+            return []
 
     @staticmethod
     def _find_client(clients: Sequence[ClientRecord], requested_sub_id: str) -> ClientRecord | None:
@@ -161,23 +174,19 @@ def subscription_metadata_headers(metadata: SubscriptionMetadata, public_url: st
     return headers
 
 
-def _select_node_link(links: Sequence[str], inbound: NodeInboundRecord, used_indexes: set[int]) -> str | None:
-    for index, link in enumerate(links):
-        if index not in used_indexes and _fragment_label(link) == inbound.label:
-            used_indexes.add(index)
-            return link
-    for index, link in enumerate(links):
-        if index not in used_indexes:
-            used_indexes.add(index)
-            return link
-    return None
+def _ensure_fragment_label(uri: str, label: str) -> str:
+    prefix, separator, fragment = uri.partition("#")
+    if separator and fragment:
+        return uri
+    return f"{prefix}#{quote(label, safe='')}"
 
 
-def _fragment_label(uri: str) -> str:
-    _prefix, separator, fragment = uri.partition("#")
-    if not separator:
-        return ""
-    return unquote(fragment)
+def _xui_inbound_is_enabled(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
 
 
 def _base64_header(value: str) -> str:
