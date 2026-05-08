@@ -40,3 +40,17 @@ def test_settings_parse_report_telegram_schedule() -> None:
 
     assert settings.report_telegram_enabled is True
     assert settings.report_telegram_schedule == "*/30 * * * *"
+
+
+def test_settings_parse_geofiles_update_schedule() -> None:
+    settings = Settings.model_validate(
+        {
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+            "GEOFILES_UPDATE_ENABLED": "true",
+            "GEOFILES_UPDATE_SCHEDULE": "15 4 * * 1",
+        }
+    )
+
+    assert settings.geofiles_update_enabled is True
+    assert settings.geofiles_update_schedule == "15 4 * * 1"

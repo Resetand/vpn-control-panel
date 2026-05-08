@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable
-from datetime import UTC, datetime
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
@@ -11,7 +8,6 @@ from aiogram.types import BufferedInputFile
 from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import JsonStateStore
-from vpn_control_plane.reports.schedule import next_cron_time
 
 logger = logging.getLogger(__name__)
 REPORT_CAPTION = "Автоматический report: бекап control-plane, секретов и 3x-UI нод."
@@ -32,30 +28,13 @@ async def send_telegram_backup_report(settings: Settings, store: JsonStateStore,
         )
 
 
-async def run_telegram_report_scheduler(
-    settings: Settings,
-    store: JsonStateStore,
-    *,
-    bot_factory: Callable[[Settings], Bot] | None = None,
-) -> None:
-    if not settings.report_telegram_enabled:
-        logger.info("Telegram report scheduler is disabled")
-        return
-
-    bot = (bot_factory or _create_bot)(settings)
+async def send_telegram_backup_report_to_admins(settings: Settings, store: JsonStateStore) -> None:
+    bot = _create_bot(settings)
     try:
-        while True:
-            now = datetime.now(UTC)
-            next_time = next_cron_time(settings.report_telegram_schedule, now)
-            delay = max(0.0, (next_time - now).total_seconds())
-            logger.info("Next Telegram report is scheduled at %s", next_time.isoformat())
-            await asyncio.sleep(delay)
-            try:
-                await send_telegram_backup_report(settings, store, bot)
-            except SecretsBackupError:
-                logger.exception("Telegram report failed while encrypting secrets backup")
-            except Exception:
-                logger.exception("Telegram report failed")
+        try:
+            await send_telegram_backup_report(settings, store, bot)
+        except SecretsBackupError:
+            logger.exception("Telegram report failed while encrypting secrets backup")
     finally:
         await bot.session.close()
 

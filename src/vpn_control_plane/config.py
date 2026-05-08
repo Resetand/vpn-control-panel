@@ -6,7 +6,7 @@ from typing import Annotated
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from vpn_control_plane.reports.schedule import validate_cron_expression
+from vpn_control_plane.crons.base import validate_cron_expression
 
 
 def _strip_wrapping_quotes(value: str) -> str:
@@ -82,6 +82,8 @@ class Settings(BaseSettings):
     backup_secrets_env_file: Path = Field(default=Path(".env"), validation_alias="BACKUP_SECRETS_ENV_FILE")
     report_telegram_enabled: bool = Field(default=False, validation_alias="REPORT_TELEGRAM_ENABLED")
     report_telegram_schedule: str = Field(default="0 3 * * *", validation_alias="REPORT_TELEGRAM_SCHEDULE")
+    geofiles_update_enabled: bool = Field(default=False, validation_alias="GEOFILES_UPDATE_ENABLED")
+    geofiles_update_schedule: str = Field(default="0 3 * * *", validation_alias="GEOFILES_UPDATE_SCHEDULE")
 
     @field_validator("backup_secrets_ssh_key")
     @classmethod
@@ -113,9 +115,9 @@ class Settings(BaseSettings):
     def strip_default_vless_flow(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("report_telegram_schedule")
+    @field_validator("report_telegram_schedule", "geofiles_update_schedule")
     @classmethod
-    def validate_report_telegram_schedule(cls, value: str) -> str:
+    def validate_cron_schedule(cls, value: str) -> str:
         return validate_cron_expression(value)
 
     @field_validator("subscription_domain")

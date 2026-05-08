@@ -7,18 +7,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
 
 from vpn_control_plane.config import Settings
+from vpn_control_plane.crons.base import App, run_registered_cron_jobs, wire_cron_jobs
 from vpn_control_plane.data.store import JsonStateStore
 from vpn_control_plane.http.routes import create_router
-from vpn_control_plane.reports.telegram import run_telegram_report_scheduler
 from vpn_control_plane.telegram.bot import run_telegram_bot
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, *, start_telegram: bool = True) -> FastAPI:
+def create_app(settings: Settings | None = None, *, start_telegram: bool = True) -> App:
     settings = settings or Settings()  # type: ignore[call-arg]
     store = JsonStateStore(settings.data_dir)
     store.verify_ready()
@@ -26,45 +25,43 @@ def create_app(settings: Settings | None = None, *, start_telegram: bool = True)
     logger.info("Application configuration and state loaded")
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        bot_task: asyncio.Task[None] | None = None
-        report_task: asyncio.Task[None] | None = None
+    async def lifespan(_app: App) -> AsyncIterator[None]:
+        bot_task = None
         if start_telegram:
-            logger.info("Starting Telegram background task")
+            logger.info("Starting Telegram bot background task")
             bot_task = asyncio.create_task(run_telegram_bot(settings, store))
-            bot_task.add_done_callback(_log_bot_task_failure)
-        if start_telegram and settings.report_telegram_enabled:
-            logger.info("Starting Telegram report scheduler task")
-            report_task = asyncio.create_task(run_telegram_report_scheduler(settings, store))
-            report_task.add_done_callback(_log_bot_task_failure)
+            bot_task.add_done_callback(
+                lambda completed_task: _log_background_task_failure("Telegram bot", completed_task)
+            )
         try:
-            yield
+            async with run_registered_cron_jobs(_app, settings, store):
+                yield
         finally:
-            if report_task is not None:
-                logger.info("Stopping Telegram report scheduler task")
-                report_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await report_task
             if bot_task is not None:
-                logger.info("Stopping Telegram background task")
+                logger.info("Stopping Telegram bot background task")
                 bot_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await bot_task
             logger.info("Application shutdown complete")
 
-    app = FastAPI(title="VPN Control Plane", lifespan=lifespan)
+    app = App(title="VPN Control Plane", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
+    wire_cron_jobs(app, settings)
     app.include_router(create_router(settings, store))
     return app
 
 
-def _log_bot_task_failure(task: asyncio.Task[None]) -> None:
+def _log_background_task_failure(name: str, task: asyncio.Task[None]) -> None:
     if task.cancelled():
         return
     exception = task.exception()
     if exception is not None:
-        logger.error("Telegram bot task stopped unexpectedly", exc_info=exception)
+        logger.error(
+            "%s background task stopped unexpectedly",
+            name,
+            exc_info=(type(exception), exception, exception.__traceback__),
+        )
 
 
 def main() -> None:

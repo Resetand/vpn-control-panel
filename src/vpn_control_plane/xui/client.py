@@ -150,6 +150,14 @@ class XuiNodeClient:
     async def get_config_json_backup(self) -> bytes:
         return await self._download("/panel/api/server/getConfigJson", operation="xui.get_config_json_backup")
 
+    async def update_geofiles(self) -> None:
+        await self._post_success("/panel/api/server/updateGeofile", operation="xui.update_geofile")
+        await self._post_success(
+            "/panel/api/custom-geo/update-all",
+            operation="xui.update_custom_geofiles",
+            ignore_not_found=True,
+        )
+
     async def add_client(self, inbound_id: int, client_payload: JsonObject) -> XuiAddClientResult:
         email = str(client_payload.get("email") or "")
         operation = "xui.add_client"
@@ -194,6 +202,19 @@ class XuiNodeClient:
             )
             raise XuiApiError(f"3x-UI download failed for node {self.node.id}: HTTP {response.status_code}")
         return response.content
+
+    async def _post_success(self, path: str, *, operation: str, ignore_not_found: bool = False) -> None:
+        response = await self._request("POST", path, operation=operation)
+        if ignore_not_found and response.status_code == 404:
+            logger.info("3x-UI operation is not supported", extra={"node_id": self.node.id, "operation": operation})
+            return
+        body = _response_json(response)
+        if response.status_code >= 400 or not body.get("success"):
+            logger.warning(
+                "3x-UI operation failed",
+                extra={"node_id": self.node.id, "operation": operation, "status_code": response.status_code},
+            )
+            raise XuiApiError(f"3x-UI {operation} failed for node {self.node.id}: {_api_message(body)}")
 
     async def _request(self, method: str, path: str, *, operation: str, **kwargs: Any) -> httpx.Response:
         if not self._logged_in:

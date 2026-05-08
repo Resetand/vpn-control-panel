@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from vpn_control_plane.data import NodeRecord
-from vpn_control_plane.xui import XuiAuthError, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
+from vpn_control_plane.xui import XuiApiError, XuiAuthError, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
 
 
 def node(**overrides: object) -> NodeRecord:
@@ -173,6 +173,58 @@ async def test_downloads_server_database_and_config_json_backups() -> None:
     ]
     assert database == b"sqlite-db"
     assert config == b'{"xray":"config"}'
+
+
+@pytest.mark.asyncio
+async def test_update_geofiles_triggers_builtin_and_custom_updates() -> None:
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        return json_response({"success": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).update_geofiles()
+
+    assert requests == [
+        ("POST", "/secret-panel/login/"),
+        ("POST", "/secret-panel/panel/api/server/updateGeofile"),
+        ("POST", "/secret-panel/panel/api/custom-geo/update-all"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_geofiles_ignores_missing_custom_geo_endpoint() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/custom-geo/update-all"):
+            return httpx.Response(404)
+        return json_response({"success": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).update_geofiles()
+
+    assert paths == [
+        "/secret-panel/login/",
+        "/secret-panel/panel/api/server/updateGeofile",
+        "/secret-panel/panel/api/custom-geo/update-all",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_geofiles_raises_when_builtin_update_fails() -> None:
+    responses: Iterator[httpx.Response] = iter(
+        [json_response({"success": True}), json_response({"success": False, "msg": "update failed"})]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(XuiApiError, match="update failed"):
+            await XuiNodeClient(node(), http_client=http_client).update_geofiles()
 
 
 @pytest.mark.asyncio
