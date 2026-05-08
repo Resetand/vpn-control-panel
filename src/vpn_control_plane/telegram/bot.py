@@ -11,7 +11,14 @@ import qrcode  # type: ignore[import-untyped]
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BufferedInputFile, Message
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    BufferedInputFile,
+    Message,
+)
 
 from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
 from vpn_control_plane.config import Settings
@@ -26,10 +33,14 @@ from vpn_control_plane.telegram.setup_messages import build_setup_instructions, 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MANUAL_CLIENT_COMMENT = "manual"
+HELP_TEXT = "Введите /start, чтобы получить или обновить доступ."
 ROUTING_PREFIXES = ("happ://routing/onadd/", "happ://routing/add/")
 ALLOWED_CHAT_MEMBER_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Получить VPN-доступ"),
+    BotCommand(command="help", description="Краткая справка"),
+    BotCommand(command="status", description="Проверить статус бота"),
+    BotCommand(command="id", description="Показать ваш Telegram ID"),
 ]
 ADMIN_BOT_COMMANDS = [
     *USER_BOT_COMMANDS,
@@ -62,12 +73,20 @@ def create_dispatcher(services: TelegramBotServices) -> Dispatcher:
     dispatcher = Dispatcher()
     dispatcher["services"] = services
     dispatcher.message.register(handle_start, CommandStart())
+    dispatcher.message.register(handle_help, Command("help"))
+    dispatcher.message.register(handle_status, Command("status"))
+    dispatcher.message.register(handle_id, Command("id"))
     dispatcher.message.register(handle_issue, Command("issue"))
     dispatcher.message.register(handle_announce, Command("announce"))
     dispatcher.message.register(handle_unannounce, Command("unannounce"))
     dispatcher.message.register(handle_backup, Command("backup"))
     dispatcher.message.register(handle_set_routing, Command("set-routing", "set_routing"))
+    dispatcher.message.register(handle_plain_text, is_plain_text_message)
     return dispatcher
+
+
+def is_plain_text_message(message: Message) -> bool:
+    return bool(message.text and not message.text.startswith("/"))
 
 
 def create_bot(settings: Settings) -> Bot:
@@ -89,6 +108,7 @@ async def run_telegram_bot(settings: Settings, store: JsonStateStore) -> None:
 async def configure_bot_commands(bot: Bot, settings: Settings) -> None:
     try:
         await bot.set_my_commands(USER_BOT_COMMANDS, scope=BotCommandScopeDefault())
+        await bot.set_my_commands(USER_BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats())
     except Exception:
         logger.exception("Failed to set Telegram default command menu")
         return
@@ -102,6 +122,16 @@ async def configure_bot_commands(bot: Bot, settings: Settings) -> None:
             await bot.set_my_commands(ADMIN_BOT_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
         except Exception:
             logger.exception("Failed to set Telegram admin command menu for user %s", admin_id)
+
+
+async def configure_chat_commands(bot: Bot | None, settings: Settings, user_id: int | str) -> None:
+    if bot is None:
+        return
+    commands = ADMIN_BOT_COMMANDS if is_admin(settings, user_id) else USER_BOT_COMMANDS
+    try:
+        await bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=int(user_id)))
+    except Exception:
+        logger.exception("Failed to sync Telegram command menu for user %s", user_id)
 
 
 def is_admin(settings: Settings, user_id: int | str) -> bool:
@@ -119,6 +149,7 @@ async def handle_start(message: Message, services: TelegramBotServices, bot: Bot
     user = message.from_user
     if user is None:
         return
+    await configure_chat_commands(bot, services.settings, user.id)
     if not _is_private_chat(message):
         await message.answer("Напишите мне в личные сообщения, чтобы получить VPN-доступ.")
         return
@@ -142,10 +173,40 @@ async def handle_start(message: Message, services: TelegramBotServices, bot: Bot
     await send_subscription_material(message, services, result)
 
 
-async def handle_issue(message: Message, services: TelegramBotServices) -> None:
+async def handle_help(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
+    user = message.from_user
+    if user is not None:
+        await configure_chat_commands(bot, services.settings, user.id)
+    await message.answer(HELP_TEXT)
+
+
+async def handle_status(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
+    user = message.from_user
+    if user is not None:
+        await configure_chat_commands(bot, services.settings, user.id)
+    await message.answer("Бот работает.")
+
+
+async def handle_id(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
     user = message.from_user
     if user is None:
         return
+    await configure_chat_commands(bot, services.settings, user.id)
+    await message.answer(f"Ваш Telegram ID: {user.id}")
+
+
+async def handle_plain_text(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
+    user = message.from_user
+    if user is not None:
+        await configure_chat_commands(bot, services.settings, user.id)
+    await message.answer(HELP_TEXT)
+
+
+async def handle_issue(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    await configure_chat_commands(bot, services.settings, user.id)
     if not await _ensure_private(message):
         return
     if not await _ensure_admin(message, services.settings, user.id, command="/issue"):
@@ -163,10 +224,11 @@ async def handle_issue(message: Message, services: TelegramBotServices) -> None:
     await send_subscription_material(message, services, result)
 
 
-async def handle_announce(message: Message, services: TelegramBotServices) -> None:
+async def handle_announce(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
     user = message.from_user
     if user is None:
         return
+    await configure_chat_commands(bot, services.settings, user.id)
     if not await _ensure_admin(message, services.settings, user.id, command="/announce"):
         return
 
@@ -180,10 +242,11 @@ async def handle_announce(message: Message, services: TelegramBotServices) -> No
     await message.answer("Объявление обновлено.")
 
 
-async def handle_unannounce(message: Message, services: TelegramBotServices) -> None:
+async def handle_unannounce(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
     user = message.from_user
     if user is None:
         return
+    await configure_chat_commands(bot, services.settings, user.id)
     if not await _ensure_admin(message, services.settings, user.id, command="/unannounce"):
         return
 
@@ -192,10 +255,11 @@ async def handle_unannounce(message: Message, services: TelegramBotServices) -> 
     await message.answer("Объявление очищено.")
 
 
-async def handle_backup(message: Message, services: TelegramBotServices) -> None:
+async def handle_backup(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
     user = message.from_user
     if user is None:
         return
+    await configure_chat_commands(bot, services.settings, user.id)
     if not await _ensure_private(message):
         return
     if not await _ensure_admin(message, services.settings, user.id, command="/backup"):
@@ -219,10 +283,11 @@ async def handle_backup(message: Message, services: TelegramBotServices) -> None
     )
 
 
-async def handle_set_routing(message: Message, services: TelegramBotServices) -> None:
+async def handle_set_routing(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
     user = message.from_user
     if user is None:
         return
+    await configure_chat_commands(bot, services.settings, user.id)
     if not await _ensure_admin(message, services.settings, user.id, command="/set-routing"):
         return
 

@@ -19,15 +19,21 @@ from vpn_control_plane.provisioning import ProvisioningResult
 from vpn_control_plane.subscription import SubscriptionService
 from vpn_control_plane.telegram.bot import (
     DEFAULT_MANUAL_CLIENT_COMMENT,
+    HELP_TEXT,
     TelegramBotServices,
     command_argument,
     configure_bot_commands,
+    configure_chat_commands,
     generate_qr_png,
     handle_announce,
     handle_backup,
+    handle_help,
+    handle_id,
     handle_issue,
+    handle_plain_text,
     handle_set_routing,
     handle_start,
+    handle_status,
     handle_unannounce,
     is_admin,
     is_allowed_user,
@@ -208,10 +214,41 @@ async def test_configure_bot_commands_sets_default_and_admin_scoped_menus(tmp_pa
 
     await configure_bot_commands(cast(Any, bot), settings(tmp_path))
 
-    assert [command.command for command in bot.calls[0]["commands"]] == ["start"]
+    assert [command.command for command in bot.calls[0]["commands"]] == ["start", "help", "status", "id"]
     assert bot.calls[0]["scope"].type == "default"
+    assert [command.command for command in bot.calls[1]["commands"]] == ["start", "help", "status", "id"]
+    assert bot.calls[1]["scope"].type == "all_private_chats"
+    assert [command.command for command in bot.calls[2]["commands"]] == [
+        "start",
+        "help",
+        "status",
+        "id",
+        "issue",
+        "announce",
+        "unannounce",
+        "backup",
+        "set_routing",
+    ]
+    assert bot.calls[2]["scope"].type == "chat"
+    assert bot.calls[2]["scope"].chat_id == 1
+
+
+@pytest.mark.asyncio
+async def test_configure_chat_commands_sets_user_specific_scope(tmp_path: Path) -> None:
+    bot = FakeCommandBot()
+    app_settings = settings(tmp_path)
+
+    await configure_chat_commands(cast(Any, bot), app_settings, 100)
+    await configure_chat_commands(cast(Any, bot), app_settings, 1)
+
+    assert [command.command for command in bot.calls[0]["commands"]] == ["start", "help", "status", "id"]
+    assert bot.calls[0]["scope"].type == "chat"
+    assert bot.calls[0]["scope"].chat_id == 100
     assert [command.command for command in bot.calls[1]["commands"]] == [
         "start",
+        "help",
+        "status",
+        "id",
         "issue",
         "announce",
         "unannounce",
@@ -280,6 +317,25 @@ async def test_start_provisions_allowed_private_user_and_sends_url_qr_and_instru
     assert len(message.photos) == 1
     assert "https://example.test/sub/100" in message.photos[0]["kwargs"]["caption"]
     assert message.answers[-1]["kwargs"] == {"parse_mode": "HTML", "disable_web_page_preview": True}
+
+
+@pytest.mark.asyncio
+async def test_help_status_id_and_plain_text_have_minimal_responses(tmp_path: Path) -> None:
+    bot_services = services(tmp_path)
+    help_message = FakeMessage("/help", 100)
+    status_message = FakeMessage("/status", 100)
+    id_message = FakeMessage("/id", 100)
+    plain_message = FakeMessage("hello", 100)
+
+    await handle_help(cast(Any, help_message), bot_services)
+    await handle_status(cast(Any, status_message), bot_services)
+    await handle_id(cast(Any, id_message), bot_services)
+    await handle_plain_text(cast(Any, plain_message), bot_services)
+
+    assert help_message.answers == [{"text": HELP_TEXT, "kwargs": {}}]
+    assert status_message.answers == [{"text": "Бот работает.", "kwargs": {}}]
+    assert id_message.answers == [{"text": "Ваш Telegram ID: 100", "kwargs": {}}]
+    assert plain_message.answers == [{"text": HELP_TEXT, "kwargs": {}}]
 
 
 @pytest.mark.asyncio
