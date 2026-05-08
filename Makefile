@@ -42,7 +42,8 @@ stop:
 	$(COMPOSE) down
 
 restart:
-	$(COMPOSE) restart
+	$(COMPOSE) down
+	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx
 
 logs:
 	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" logs -f -t app nginx
