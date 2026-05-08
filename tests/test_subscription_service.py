@@ -559,6 +559,101 @@ def test_subscription_route_returns_404_for_unknown_client(tmp_path: Path) -> No
     assert response.status_code == 404
 
 
+def test_subscription_route_returns_html_for_browser_accept(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"profile-title": "Family VPN"},
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    response = TestClient(app).get("/sub/123", headers={"accept": "text/html"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert "<title>Family VPN</title>" in response.text
+    assert "data:image/png;base64," in response.text
+    assert "Family VPN" in response.text
+    assert "Ссылка для подключения" in response.text
+    assert "Рекомендуемые приложения" in response.text
+    assert "Доступные ключи" in response.text
+    assert "Germany" in response.text
+    assert "Семейный VPN" not in response.text
+    assert "Подписка:" not in response.text
+    assert "Decoded data" not in response.text
+    assert "publicUrl" not in response.text
+    assert "Key QR code" not in response.text
+
+
+def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"profile-title": "Family VPN"},
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    response = TestClient(app).get("/sub/123", headers={"accept": "application/json"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json; charset=utf-8"
+    payload = response.json()
+    assert payload["subscription"]["title"] == "Family VPN"
+    assert payload["subscription"]["profile_title"] == "Family VPN"
+    assert payload["subscription"]["client_title"] == "Existing"
+    assert payload["subscription"]["public_url"] == "https://example.test/sub/123"
+    assert base64.b64decode(payload["subscription"]["encoded"]).decode("utf-8") == "vless://external#Germany\n"
+    assert payload["links"] == [{"name": "Germany", "protocol": "VLESS", "url": "vless://external#Germany"}]
+    assert payload["recommended_clients"]["android"]["name"] == "Happ"
+
+
+def test_subscription_route_keeps_legacy_base64_for_wildcard_accept(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    response = TestClient(app).get("/sub/123", headers={"accept": "*/*"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert base64.b64decode(response.text).decode("utf-8") == "vless://external#Germany\n"
+
+
 def test_create_app_exposes_health_after_configuration_and_state_load(tmp_path: Path) -> None:
     prepare_store(tmp_path)
     settings = Settings.model_validate(

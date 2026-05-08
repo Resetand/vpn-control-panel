@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from urllib.parse import quote
+from importlib.resources import files
+from io import BytesIO
+from typing import Any, cast
+from urllib.parse import quote, unquote, urlsplit
 
+import qrcode  # type: ignore[import-untyped]
 from fastapi import Response
 
 from vpn_control_plane.data import (
@@ -189,10 +194,19 @@ class SubscriptionService:
 
 
 def render_subscription_response(subscription: BuiltSubscription) -> Response:
-    decoded_body = "\n".join(subscription.links)
-    if decoded_body:
-        decoded_body = f"{decoded_body}\n"
-    encoded_body = base64.b64encode(decoded_body.encode("utf-8")).decode("ascii")
+    return render_subscription_text_response(subscription)
+
+
+def render_subscription_by_accept(subscription: BuiltSubscription, accept: str | None) -> Response:
+    if _accepts(accept, "text/html"):
+        return render_subscription_html_response(subscription)
+    if _accepts(accept, "application/json"):
+        return render_subscription_json_response(subscription)
+    return render_subscription_text_response(subscription)
+
+
+def render_subscription_text_response(subscription: BuiltSubscription) -> Response:
+    encoded_body = _encoded_subscription_body(subscription)
     return Response(
         content=encoded_body,
         media_type="text/plain; charset=utf-8",
@@ -202,6 +216,121 @@ def render_subscription_response(subscription: BuiltSubscription) -> Response:
             subscription_userinfo=subscription.subscription_userinfo,
         ),
     )
+
+
+def render_subscription_json_response(subscription: BuiltSubscription) -> Response:
+    payload = _subscription_view_payload(subscription)
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False),
+        media_type="application/json; charset=utf-8",
+    )
+
+
+def render_subscription_html_response(subscription: BuiltSubscription) -> Response:
+    payload = _subscription_view_payload(subscription, include_qr=True)
+    template = files("vpn_control_plane.subscription").joinpath("assets/subscription.html").read_text(encoding="utf-8")
+    title = payload["subscription"]["title"]
+    content = template.replace("__SUBSCRIPTION_TITLE__", _html_escape(title)).replace(
+        "__SUBSCRIPTION_PAYLOAD__",
+        _json_script_escape(json.dumps(payload, ensure_ascii=False)),
+    )
+    return Response(content=content, media_type="text/html; charset=utf-8")
+
+
+def _decoded_subscription_body(subscription: BuiltSubscription) -> str:
+    decoded_body = "\n".join(subscription.links)
+    if decoded_body:
+        decoded_body = f"{decoded_body}\n"
+    return decoded_body
+
+
+def _encoded_subscription_body(subscription: BuiltSubscription) -> str:
+    return base64.b64encode(_decoded_subscription_body(subscription).encode("utf-8")).decode("ascii")
+
+
+def _subscription_view_payload(subscription: BuiltSubscription, *, include_qr: bool = False) -> dict[str, Any]:
+    profile_title = subscription.metadata.profile_title or ""
+    client_title = subscription.client.comment or subscription.client.effective_sub_id
+    title = profile_title or client_title
+    links = [_subscription_link_payload(link, index) for index, link in enumerate(subscription.links)]
+    subscription_info: dict[str, Any] = {
+        "id": subscription.client.effective_sub_id,
+        "title": title,
+        "profile_title": profile_title,
+        "client_title": client_title,
+        "public_url": subscription.public_url,
+        "decoded": _decoded_subscription_body(subscription),
+        "encoded": _encoded_subscription_body(subscription),
+    }
+    if include_qr:
+        subscription_info["qr"] = _qr_png_data_uri(subscription.public_url)
+
+    return {
+        "subscription": subscription_info,
+        "links": links,
+        "recommended_clients": _recommended_clients(),
+        "metadata": subscription.metadata.model_dump(by_alias=True),
+        "subscription_userinfo": subscription.subscription_userinfo,
+        "node_errors": list(subscription.node_errors),
+    }
+
+
+def _subscription_link_payload(link: str, index: int) -> dict[str, Any]:
+    return {
+        "name": _subscription_link_name(link, index),
+        "protocol": _subscription_link_protocol(link),
+        "url": link,
+    }
+
+
+def _subscription_link_name(link: str, index: int) -> str:
+    fragment = urlsplit(link).fragment
+    if fragment:
+        try:
+            decoded = unquote(fragment).strip()
+        except Exception:  # noqa: BLE001 - fragments from external links can be arbitrary.
+            decoded = fragment.strip()
+        if decoded:
+            return decoded
+    return f"Key {index + 1}"
+
+
+def _subscription_link_protocol(link: str) -> str:
+    scheme, separator, _rest = link.partition("://")
+    if separator and scheme:
+        return scheme.upper()
+    return "LINK"
+
+
+def _recommended_clients() -> dict[str, dict[str, str]]:
+    content = files("vpn_control_plane.telegram").joinpath("clients_recommended.json").read_text(encoding="utf-8")
+    return cast(dict[str, dict[str, str]], json.loads(content))
+
+
+def _qr_png_data_uri(value: str) -> str:
+    image = qrcode.make(value)
+    buffer = BytesIO()
+    image.save(buffer, "PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _accepts(accept: str | None, media_type: str) -> bool:
+    if not accept:
+        return False
+    for item in accept.lower().split(","):
+        value = item.split(";", 1)[0].strip()
+        if value == media_type:
+            return True
+    return False
+
+
+def _html_escape(value: object) -> str:
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _json_script_escape(value: str) -> str:
+    return value.replace("&", r"\u0026").replace("<", r"\u003c").replace(">", r"\u003e")
 
 
 def subscription_metadata_headers(

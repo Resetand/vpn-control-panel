@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="ru">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="robots" content="noindex,nofollow">
+	<title>__SUBSCRIPTION_TITLE__</title>
+	<style>
+		:root {
+			color-scheme: light;
+			--bg: #f5f5f7;
+			--surface: rgba(255, 255, 255, 0.82);
+			--surface-solid: #ffffff;
+			--text: #1d1d1f;
+			--muted: #6e6e73;
+			--line: rgba(0, 0, 0, 0.1);
+			--accent: #0071e3;
+			--accent-soft: rgba(0, 113, 227, 0.1);
+			--green: #248a3d;
+			--orange: #bf5b00;
+			--shadow: 0 18px 48px rgba(0, 0, 0, 0.08);
+		}
+
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			min-height: 100vh;
+			background: var(--bg);
+			color: var(--text);
+			font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+			line-height: 1.45;
+		}
+
+		button, a, input, textarea { font: inherit; }
+
+		.page {
+			width: min(1120px, 100%);
+			margin: 0 auto;
+			padding: 32px 20px 56px;
+		}
+
+		.topbar {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 16px;
+			margin-bottom: 24px;
+		}
+
+		.brand {
+			min-width: 0;
+		}
+
+		.eyebrow {
+			margin-bottom: 8px;
+			color: var(--accent);
+			font-size: 14px;
+			font-weight: 700;
+			text-transform: uppercase;
+            margin-left: 5px;
+            margin-top: 10px;
+		}
+
+		h1 {
+			margin: 0;
+			font-size: clamp(28px, 4vw, 48px);
+			line-height: 1.05;
+			letter-spacing: 0;
+		}
+
+		.subtitle {
+			margin-top: 8px;
+			color: var(--muted);
+			overflow-wrap: anywhere;
+		}
+
+		.status {
+			flex: 0 0 auto;
+			padding: 6px 10px;
+			border: 1px solid var(--line);
+			border-radius: 999px;
+			color: var(--green);
+			background: var(--surface-solid);
+			font-size: 13px;
+			font-weight: 600;
+		}
+
+		.grid {
+			display: grid;
+			grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.95fr);
+			gap: 16px;
+			align-items: stretch;
+		}
+
+		.panel {
+			display: flex;
+			flex-direction: column;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: var(--surface);
+			box-shadow: var(--shadow);
+			backdrop-filter: saturate(180%) blur(18px);
+			-webkit-backdrop-filter: saturate(180%) blur(18px);
+		}
+
+		.panel-inner { padding: 18px; }
+
+		.details-panel .panel-inner {
+			display: flex;
+			flex: 1;
+			flex-direction: column;
+			justify-content: center;
+		}
+
+		.qr-panel .panel-inner {
+			margin-top: auto;
+		}
+
+		.qr-wrap {
+			display: grid;
+			flex: 1;
+			place-items: center;
+			padding: 18px;
+			background: var(--surface-solid);
+			border-bottom: 1px solid var(--line);
+			border-radius: 8px 8px 0 0;
+		}
+
+		.qr {
+			width: min(264px, 100%);
+			aspect-ratio: 1;
+			border-radius: 8px;
+			image-rendering: pixelated;
+		}
+
+		.actions {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 8px;
+			margin-top: 14px;
+		}
+
+		.button {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			min-height: 40px;
+			padding: 9px 12px;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: var(--surface-solid);
+			color: var(--text);
+			text-decoration: none;
+			cursor: pointer;
+			font-weight: 600;
+			transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+		}
+
+		.button:hover { background: #f8f8fa; border-color: rgba(0, 0, 0, 0.18); }
+		.button:active { transform: scale(0.99); }
+		.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+		.button.primary:hover { background: #0077ed; }
+
+		.section { margin-top: 16px; }
+		.section:first-child { margin-top: 0; }
+
+		.section-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			margin-bottom: 10px;
+		}
+
+		h2 {
+			margin: 0;
+			font-size: 17px;
+			letter-spacing: 0;
+		}
+
+		.muted { color: var(--muted); }
+
+		.field {
+			display: grid;
+			gap: 8px;
+		}
+
+		.field label {
+			color: var(--muted);
+			font-size: 13px;
+			font-weight: 600;
+		}
+
+		textarea, input {
+			width: 100%;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.72);
+			color: var(--text);
+			padding: 10px 12px;
+			resize: vertical;
+			overflow-wrap: anywhere;
+		}
+
+		textarea { min-height: 92px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+		.client-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 8px;
+		}
+
+		.client {
+			display: grid;
+			gap: 4px;
+			padding: 12px;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.62);
+			text-decoration: none;
+			color: var(--text);
+		}
+
+		.client strong { font-size: 14px; }
+		.client span { color: var(--muted); font-size: 13px; }
+
+		.keys {
+			display: grid;
+			gap: 10px;
+			min-width: 0;
+		}
+
+		.key {
+			min-width: 0;
+			overflow: hidden;
+			padding: 12px;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.66);
+		}
+
+		.key-main {
+			min-width: 0;
+			max-width: 100%;
+		}
+
+		.key-title {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			min-width: 0;
+			margin-bottom: 8px;
+		}
+
+		.pill {
+			flex: 0 0 auto;
+			padding: 3px 7px;
+			border-radius: 999px;
+			background: var(--accent-soft);
+			color: var(--accent);
+			font-size: 11px;
+			font-weight: 700;
+		}
+
+		.key-name {
+			min-width: 0;
+			font-weight: 700;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.key-url {
+			display: block;
+			width: 100%;
+			max-width: 100%;
+			min-width: 0;
+			padding: 8px 10px;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: rgba(255, 255, 255, 0.82);
+			color: var(--muted);
+			font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			font-size: 12px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.key-actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			margin-top: 10px;
+		}
+
+		.mini {
+			min-height: 32px;
+			padding: 6px 10px;
+			font-size: 13px;
+		}
+
+		.notice {
+			padding: 10px 12px;
+			border-radius: 8px;
+			background: rgba(255, 149, 0, 0.12);
+			color: var(--orange);
+			font-size: 13px;
+		}
+
+		.toast {
+			position: fixed;
+			left: 50%;
+			bottom: 20px;
+			transform: translateX(-50%) translateY(16px);
+			opacity: 0;
+			pointer-events: none;
+			padding: 10px 14px;
+			border-radius: 999px;
+			background: rgba(29, 29, 31, 0.9);
+			color: #fff;
+			box-shadow: var(--shadow);
+			transition: opacity 160ms ease, transform 160ms ease;
+			font-size: 14px;
+			font-weight: 600;
+		}
+
+		.toast.show {
+			opacity: 1;
+			transform: translateX(-50%) translateY(0);
+		}
+
+		@media (max-width: 820px) {
+			.page { padding: 20px 12px 36px; }
+			.topbar { align-items: flex-start; flex-direction: column; }
+			.grid { grid-template-columns: 1fr; }
+			.client-grid { grid-template-columns: 1fr; }
+		}
+
+		@media (max-width: 520px) {
+			.actions { grid-template-columns: 1fr; }
+			.key-url { white-space: normal; overflow-wrap: anywhere; }
+		}
+	</style>
+</head>
+<body>
+	<main class="page">
+		<header class="topbar">
+			<div class="brand">
+				<h1 id="profileTitle">__SUBSCRIPTION_TITLE__</h1>
+				<div id="clientTitle" class="eyebrow" hidden></div>
+			</div>
+			<div class="status" id="keyCount"></div>
+		</header>
+
+		<div class="grid">
+			<section class="panel details-panel">
+				<div class="panel-inner">
+					<div class="section">
+						<div class="section-head"><h2>Ссылка для подключения</h2></div>
+						<div class="field">
+							<label for="subscriptionLink">Для добавления в приложение</label>
+							<input id="subscriptionLink" readonly>
+						</div>
+					</div>
+
+					<div class="section">
+						<div class="section-head"><h2>Рекомендуемые приложения</h2></div>
+						<div id="clients" class="client-grid"></div>
+					</div>
+
+					<div class="section" id="warnings" hidden></div>
+				</div>
+			</section>
+
+			<aside class="panel qr-panel">
+				<div class="qr-wrap"><img id="subscriptionQr" class="qr" alt="QR-код ссылки для подключения"></div>
+				<div class="panel-inner">
+					<div class="actions">
+						<button class="button primary" id="copyLink" type="button">Скопировать</button>
+						<a class="button" id="openLink" target="_blank" rel="noopener noreferrer">Открыть</a>
+						<a class="button" id="happImport">В Happ</a>
+					</div>
+				</div>
+			</aside>
+		</div>
+
+		<section class="panel section">
+			<div class="panel-inner">
+				<div class="section-head">
+					<h2>Доступные ключи</h2>
+					<span class="muted" id="keysHint"></span>
+				</div>
+				<div id="keys" class="keys"></div>
+			</div>
+		</section>
+	</main>
+
+	<div id="toast" class="toast" role="status" aria-live="polite"></div>
+	<script id="subscriptionPayload" type="application/json">__SUBSCRIPTION_PAYLOAD__</script>
+	<script>
+		const payload = JSON.parse(document.getElementById('subscriptionPayload').textContent);
+		const subscription = payload.subscription;
+
+		const $ = (id) => document.getElementById(id);
+		const toast = $('toast');
+		let toastTimer = null;
+
+		function notify(message) {
+			toast.textContent = message;
+			toast.classList.add('show');
+			clearTimeout(toastTimer);
+			toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
+		}
+
+		async function copy(text, label) {
+			try {
+				await navigator.clipboard.writeText(text);
+				notify(label || 'Copied');
+			} catch (_) {
+				const area = document.createElement('textarea');
+				area.value = text;
+				area.setAttribute('readonly', '');
+				area.style.position = 'fixed';
+				area.style.opacity = '0';
+				document.body.appendChild(area);
+				area.select();
+				document.execCommand('copy');
+				area.remove();
+				notify(label || 'Copied');
+			}
+		}
+
+		function platformLabel(key, client) {
+			return client.platform || key.charAt(0).toUpperCase() + key.slice(1);
+		}
+
+		function pluralKeys(count) {
+			const lastTwo = count % 100;
+			const last = count % 10;
+			if (lastTwo >= 11 && lastTwo <= 14) return 'ключей';
+			if (last === 1) return 'ключ';
+			if (last >= 2 && last <= 4) return 'ключа';
+			return 'ключей';
+		}
+
+		$('profileTitle').textContent = subscription.profile_title || subscription.client_title;
+		if (subscription.profile_title && subscription.client_title && subscription.client_title !== subscription.profile_title) {
+			$('clientTitle').hidden = false;
+			$('clientTitle').textContent = subscription.client_title;
+		}
+		$('subscriptionQr').src = subscription.qr;
+		$('subscriptionLink').value = subscription.public_url;
+		$('openLink').href = subscription.public_url;
+		$('happImport').href = 'happ://add/' + subscription.public_url;
+		$('keyCount').textContent = payload.links.length + ' ' + pluralKeys(payload.links.length);
+		$('keysHint').textContent = 'Можно скопировать каждый ключ отдельно';
+
+		$('copyLink').addEventListener('click', () => copy(subscription.public_url, 'Ссылка скопирована'));
+
+		const clients = $('clients');
+		Object.entries(payload.recommended_clients || {}).forEach(([key, client]) => {
+			const link = document.createElement('a');
+			link.className = 'client';
+			link.href = client.url;
+			link.target = '_blank';
+			link.rel = 'noopener noreferrer';
+			link.innerHTML = '<strong></strong><span></span>';
+			link.querySelector('strong').textContent = platformLabel(key, client);
+			link.querySelector('span').textContent = client.name;
+			clients.appendChild(link);
+		});
+
+		const warnings = $('warnings');
+		if (payload.node_errors && payload.node_errors.length) {
+			warnings.hidden = false;
+			warnings.className = 'section notice';
+			warnings.textContent = 'Часть серверов временно недоступна. Показанные ключи можно использовать.';
+		}
+
+		const keys = $('keys');
+		payload.links.forEach((link) => {
+			const item = document.createElement('article');
+			item.className = 'key';
+			item.innerHTML = `
+				<div class="key-main">
+					<div class="key-title"><span class="pill"></span><div class="key-name"></div></div>
+					<div class="key-url"></div>
+					<div class="key-actions">
+						<button class="button mini" type="button" data-action="copy">Скопировать</button>
+						<a class="button mini" target="_blank" rel="noopener noreferrer">Открыть</a>
+					</div>
+				</div>`;
+			item.querySelector('.pill').textContent = link.protocol;
+			item.querySelector('.key-name').textContent = link.name;
+			item.querySelector('.key-url').textContent = link.url;
+			item.querySelector('a').href = link.url;
+			item.querySelector('button').addEventListener('click', () => copy(link.url, 'Ключ скопирован'));
+			keys.appendChild(item);
+		});
+	</script>
+</body>
+</html>

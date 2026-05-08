@@ -10,7 +10,7 @@ from vpn_control_plane.data import JsonStateStore
 from vpn_control_plane.subscription import (
     SubscriptionService,
     UnknownSubscriptionClientError,
-    render_subscription_response,
+    render_subscription_by_accept,
 )
 
 
@@ -35,12 +35,12 @@ def create_router(settings: Settings, store: JsonStateStore) -> APIRouter:
         )
 
     @router.get(f"{settings.subscription_route}{{sub_id:path}}")
-    async def subscription(sub_id: str) -> Response:
+    async def subscription(sub_id: str, accept: str | None = Header(default=None)) -> Response:
         try:
             built_subscription = await subscription_service.build(sub_id)
         except UnknownSubscriptionClientError as exc:
             raise HTTPException(status_code=404, detail="subscription not found") from exc
-        return render_subscription_response(built_subscription)
+        return render_subscription_by_accept(built_subscription, accept)
 
     return router
 
