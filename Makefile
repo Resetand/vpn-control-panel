@@ -32,24 +32,20 @@ backup-secrets: $(ENV_FILE)
 	mkdir -p backups
 	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup secrets --env-file /app/$(ENV_FILE) --output /app/backups/env.encrypted
 
-up: init
+start: init
 	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx
-
-run: up
 
 build:
 	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" build app nginx
 
-down:
+stop:
 	$(COMPOSE) down
 
-stop: down
+restart:
+	$(COMPOSE) restart
 
 logs:
 	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" logs -f -t app nginx
-
-ps:
-	$(COMPOSE) ps
 
 test:
 	$(COMPOSE) run --rm --build dev pytest
