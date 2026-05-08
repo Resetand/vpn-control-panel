@@ -144,6 +144,12 @@ class XuiNodeClient:
             return None
         return _parse_inbound(raw_inbound)
 
+    async def get_database_backup(self) -> bytes:
+        return await self._download("/panel/api/server/getDb", operation="xui.get_database_backup")
+
+    async def get_config_json_backup(self) -> bytes:
+        return await self._download("/panel/api/server/getConfigJson", operation="xui.get_config_json_backup")
+
     async def add_client(self, inbound_id: int, client_payload: JsonObject) -> XuiAddClientResult:
         email = str(client_payload.get("email") or "")
         operation = "xui.add_client"
@@ -178,6 +184,16 @@ class XuiNodeClient:
             )
             raise XuiApiError(f"3x-UI request failed for node {self.node.id}: HTTP {response.status_code}")
         return body
+
+    async def _download(self, path: str, *, operation: str) -> bytes:
+        response = await self._request("GET", path, operation=operation)
+        if response.status_code >= 400:
+            logger.warning(
+                "3x-UI operation failed",
+                extra={"node_id": self.node.id, "operation": operation, "status_code": response.status_code},
+            )
+            raise XuiApiError(f"3x-UI download failed for node {self.node.id}: HTTP {response.status_code}")
+        return response.content
 
     async def _request(self, method: str, path: str, *, operation: str, **kwargs: Any) -> httpx.Response:
         if not self._logged_in:

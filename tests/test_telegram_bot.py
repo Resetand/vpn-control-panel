@@ -11,9 +11,10 @@ from typing import Any, cast
 import pytest
 from aiogram.enums import ChatMemberStatus
 
-import vpn_control_plane.data.backup as backup_module
+import vpn_control_plane.backup.secrets as backup_secrets
+from vpn_control_plane.backup import build_data_backup
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import ClientRecord, JsonStateStore, build_data_backup
+from vpn_control_plane.data import ClientRecord, JsonStateStore
 from vpn_control_plane.provisioning import ProvisioningResult
 from vpn_control_plane.subscription import SubscriptionService
 from vpn_control_plane.telegram.bot import (
@@ -385,7 +386,8 @@ async def test_backup_is_admin_only_private_and_sends_archive(tmp_path: Path) ->
         {"text": "Напишите мне в личные сообщения, чтобы получить VPN-доступ.", "kwargs": {}}
     ]
     assert len(admin_message.documents) == 1
-    assert admin_message.documents[0]["kwargs"] == {"caption": "Бекап данных control-plane."}
+    assert admin_message.documents[0]["document"].filename == "vpn-control-plane-backup.tar.gz"
+    assert admin_message.documents[0]["kwargs"] == {"caption": "Бекап control-plane, секретов и 3x-UI нод."}
 
 
 @pytest.mark.asyncio
@@ -395,7 +397,7 @@ async def test_backup_sends_encrypted_secrets_archive_when_ssh_key_is_configured
 ) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("VPN_TELEGRAM_BOT_TOKEN=secret\n", encoding="utf-8")
-    monkeypatch.setattr(backup_module, "encrypt_for_ssh_public_key", lambda _plaintext, _key: b"encrypted-secrets")
+    monkeypatch.setattr(backup_secrets, "encrypt_for_ssh_public_key", lambda _plaintext, _key: b"encrypted-secrets")
     app_settings = settings(
         tmp_path,
         backup_secrets_ssh_key="ssh-ed25519 AAAATEST backup",
@@ -406,10 +408,9 @@ async def test_backup_sends_encrypted_secrets_archive_when_ssh_key_is_configured
 
     await handle_backup(cast(Any, admin_message), bot_services)
 
-    assert len(admin_message.documents) == 2
-    assert admin_message.documents[0]["document"].filename == "vpn-control-plane-data.tar.gz"
-    assert admin_message.documents[1]["document"].filename == "backup.secrets"
-    assert admin_message.documents[1]["kwargs"] == {"caption": "Зашифрованный бекап секретов."}
+    assert len(admin_message.documents) == 1
+    assert admin_message.documents[0]["document"].filename == "vpn-control-plane-backup.tar.gz"
+    assert admin_message.documents[0]["kwargs"] == {"caption": "Бекап control-plane, секретов и 3x-UI нод."}
 
 
 @pytest.mark.asyncio

@@ -4,8 +4,9 @@ import secrets
 
 from fastapi import APIRouter, Header, HTTPException, Response, status
 
+from vpn_control_plane.backup import DATA_BACKUP_FILE_NAME, build_data_backup
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import BACKUP_FILE_NAME, JsonStateStore, build_data_backup
+from vpn_control_plane.data import JsonStateStore
 from vpn_control_plane.subscription import (
     SubscriptionService,
     UnknownSubscriptionClientError,
@@ -30,7 +31,7 @@ def create_router(settings: Settings, store: JsonStateStore) -> APIRouter:
         return Response(
             content=build_data_backup(store.data_dir),
             media_type="application/gzip",
-            headers={"content-disposition": f'attachment; filename="{BACKUP_FILE_NAME}"'},
+            headers={"content-disposition": f'attachment; filename="{DATA_BACKUP_FILE_NAME}"'},
         )
 
     @router.get(f"{settings.subscription_route}{{sub_id:path}}")

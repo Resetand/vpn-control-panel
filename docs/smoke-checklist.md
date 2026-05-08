@@ -56,5 +56,6 @@ Use this checklist against a disposable 3x-UI test node before cutover. Run it w
 1. Download a backup with `curl -H "Authorization: Bearer $BACKUP_HTTP_TOKEN" -o data.tar.gz http://127.0.0.1:8080/backup`.
 2. Confirm the archive contains only `nodes.json`, `clients.json`, `inbounds.json`, and `subscription.json`.
 3. Confirm the archive does not contain `.env`, logs, caches, Telegram tokens, or raw environment secret values.
-4. If `BACKUP_SECRETS_SSH_KEY` is configured, send `/backup` as a Telegram admin and confirm the bot sends both the regular data archive and `backup.secrets`.
-5. Copy `backup.secrets` to a machine with the matching private key and confirm `age -d -i ~/.ssh/id_ed25519 -o secrets.tar.gz backup.secrets` decrypts successfully.
+4. Send `/backup` as a Telegram admin and confirm the bot sends one `vpn-control-plane-backup.tar.gz` archive.
+5. Confirm the Telegram archive contains `data/`, 3x-UI node files, and `env.encrypted` when `BACKUP_SECRETS_SSH_KEY` is configured.
+6. Copy the Telegram archive to a machine with the matching private key and confirm `tar -xzOf vpn-control-plane-backup.tar.gz env.encrypted | age -d -i ~/.ssh/id_ed25519 | tar -tzf -` lists `.env`.

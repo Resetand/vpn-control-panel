@@ -26,11 +26,11 @@ restore-data:
 
 backup-data: $(ENV_FILE) init-data
 	mkdir -p backups
-	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.data.backup data --data-dir /app/data --output /app/backups/data-$$(date +%Y%m%d-%H%M%S).tar.gz
+	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup data --data-dir /app/data --output /app/backups/data-$$(date +%Y%m%d-%H%M%S).tar.gz
 
 backup-secrets: $(ENV_FILE)
 	mkdir -p backups
-	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.data.backup secrets --env-file /app/$(ENV_FILE) --output /app/backups/backup.secrets
+	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup secrets --env-file /app/$(ENV_FILE) --output /app/backups/env.encrypted
 
 up: init
 	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx

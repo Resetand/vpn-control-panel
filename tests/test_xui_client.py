@@ -150,6 +150,44 @@ async def test_get_inbound_returns_none_when_api_reports_missing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_downloads_server_database_and_config_json_backups() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/login/"):
+            return json_response({"success": True})
+        if request.url.path.endswith("/getDb"):
+            return httpx.Response(200, content=b"sqlite-db")
+        return httpx.Response(200, content=b'{"xray":"config"}')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = XuiNodeClient(node(), http_client=http_client)
+        database = await client.get_database_backup()
+        config = await client.get_config_json_backup()
+
+    assert paths == [
+        "/secret-panel/login/",
+        "/secret-panel/panel/api/server/getDb",
+        "/secret-panel/panel/api/server/getConfigJson",
+    ]
+    assert database == b"sqlite-db"
+    assert config == b'{"xray":"config"}'
+
+
+@pytest.mark.asyncio
+async def test_server_backup_download_raises_on_http_error() -> None:
+    responses: Iterator[httpx.Response] = iter([json_response({"success": True}), httpx.Response(500)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(Exception, match="HTTP 500"):
+            await XuiNodeClient(node(), http_client=http_client).get_database_backup()
+
+
+@pytest.mark.asyncio
 async def test_add_client_treats_duplicate_email_as_idempotent_after_reread() -> None:
     existing = {"email": "1_123", "id": "existing-uuid", "subId": "legacy-sub"}
     responses: Iterator[httpx.Response] = iter(

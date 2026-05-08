@@ -13,15 +13,11 @@ from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, CommandStart
 from aiogram.types import BufferedInputFile, Message
 
+from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import (
-    BACKUP_FILE_NAME,
-    SECRETS_BACKUP_FILE_NAME,
     JsonStateStore,
-    SecretsBackupError,
     SubscriptionMetadata,
-    build_data_backup,
-    build_secrets_backup,
 )
 from vpn_control_plane.provisioning import ProvisioningError, ProvisioningResult, ProvisioningService
 from vpn_control_plane.subscription import SubscriptionService
@@ -175,27 +171,21 @@ async def handle_backup(message: Message, services: TelegramBotServices) -> None
     if not await _ensure_admin(message, services.settings, user.id, command="/backup"):
         return
 
-    backup = build_data_backup(services.store.data_dir)
-    await message.answer_document(
-        BufferedInputFile(backup, filename=BACKUP_FILE_NAME),
-        caption="Бекап данных control-plane.",
-    )
-    if services.settings.backup_secrets_ssh_key is None:
-        return
-
     try:
-        secrets_backup = build_secrets_backup(
-            services.settings.backup_secrets_env_file,
-            services.settings.backup_secrets_ssh_key,
+        backup = await build_control_plane_backup(
+            services.store.data_dir,
+            services.store.load_nodes(),
+            env_file=services.settings.backup_secrets_env_file,
+            ssh_public_key=services.settings.backup_secrets_ssh_key,
         )
     except SecretsBackupError:
         logger.exception("Secrets backup failed")
-        await message.answer("Бекап данных создан, но не удалось зашифровать бекап секретов.")
+        await message.answer("Не удалось зашифровать бекап секретов.")
         return
 
     await message.answer_document(
-        BufferedInputFile(secrets_backup, filename=SECRETS_BACKUP_FILE_NAME),
-        caption="Зашифрованный бекап секретов.",
+        BufferedInputFile(backup, filename=CONTROL_PLANE_BACKUP_FILE_NAME),
+        caption="Бекап control-plane, секретов и 3x-UI нод.",
     )
 
 
