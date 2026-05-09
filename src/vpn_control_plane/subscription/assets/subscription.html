@@ -88,7 +88,7 @@
 
 		.grid {
 			display: grid;
-			grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.95fr);
+			grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.55fr);
 			gap: 16px;
 			align-items: stretch;
 		}
@@ -356,7 +356,17 @@
 		</header>
 
 		<div class="grid">
-			<section class="panel details-panel">
+			<aside class="panel qr-panel">
+				<div class="qr-wrap"><img id="subscriptionQr" class="qr" alt="QR-код ссылки для подключения"></div>
+				<div class="panel-inner">
+					<div class="actions">
+						<button class="button primary" id="copyLink" type="button">Скопировать</button>
+						<a class="button" id="openLink" target="_blank" rel="noopener noreferrer">Открыть</a>
+						<a class="button" id="happImport">В Happ</a>
+					</div>
+				</div>
+			</aside>
+            <section class="panel details-panel">
 				<div class="panel-inner">
 					<div class="section">
 						<div class="section-head"><h2>Ссылка для подключения</h2></div>
@@ -374,17 +384,6 @@
 					<div class="section" id="warnings" hidden></div>
 				</div>
 			</section>
-
-			<aside class="panel qr-panel">
-				<div class="qr-wrap"><img id="subscriptionQr" class="qr" alt="QR-код ссылки для подключения"></div>
-				<div class="panel-inner">
-					<div class="actions">
-						<button class="button primary" id="copyLink" type="button">Скопировать</button>
-						<a class="button" id="openLink" target="_blank" rel="noopener noreferrer">Открыть</a>
-						<a class="button" id="happImport">В Happ</a>
-					</div>
-				</div>
-			</aside>
 		</div>
 
 		<section class="panel section">
@@ -456,7 +455,7 @@
 		$('openLink').href = subscription.public_url;
 		$('happImport').href = 'happ://add/' + subscription.public_url;
 		$('keyCount').textContent = payload.links.length + ' ' + pluralKeys(payload.links.length);
-		$('keysHint').textContent = 'Можно скопировать каждый ключ отдельно';
+		$('keysHint').textContent = '';
 
 		$('copyLink').addEventListener('click', () => copy(subscription.public_url, 'Ссылка скопирована'));
 
