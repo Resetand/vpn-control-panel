@@ -18,9 +18,8 @@ def valid_nodes() -> list[dict[str, object]]:
             "id": 1,
             "host": "eu.example.test",
             "port": 2053,
-            "webBasePath": "panel",
-            "username": "${{ env.EU_USERNAME }}",
-            "password": "${{ env.EU_PASSWORD }}",
+            "basePath": "panel",
+            "apiToken": "${{ env.EU_API_TOKEN }}",
         }
     ]
 
@@ -42,7 +41,8 @@ def valid_inbounds() -> list[dict[str, object]]:
     ]
 
 
-def test_loads_valid_state_and_normalizes_fields(tmp_path: Path) -> None:
+def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
     write_json(tmp_path / "nodes.json", valid_nodes())
     write_json(tmp_path / "clients.json", valid_clients())
     write_json(tmp_path / "inbounds.json", valid_inbounds())
@@ -50,7 +50,8 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path) -> None:
 
     state = JsonStateStore(tmp_path).load_state()
 
-    assert state.nodes[0].web_base_path == "/panel/"
+    assert state.nodes[0].base_path == "/panel/"
+    assert state.nodes[0].api_token == "eu-token"
     assert state.clients[0].effective_sub_id == "legacy-sub-id"
     assert state.inbounds[0].type == "node-inbound"
     assert state.inbounds[0].permanent_client_email == "shared-client"
@@ -61,8 +62,7 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path) -> None:
 def test_resolves_env_templates_in_any_json_string_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NODE_HOST", "resolved.example.test")
     monkeypatch.setenv("NODE_PORT", "443")
-    monkeypatch.setenv("NODE_USERNAME", "admin")
-    monkeypatch.setenv("NODE_PASSWORD", "secret")
+    monkeypatch.setenv("NODE_API_TOKEN", "api-token")
     monkeypatch.setenv("PROFILE_TITLE", "base64:UmVzb2x2ZWQ=")
     write_json(
         tmp_path / "nodes.json",
@@ -71,9 +71,8 @@ def test_resolves_env_templates_in_any_json_string_field(tmp_path: Path, monkeyp
                 "id": 1,
                 "host": "${{ env.NODE_HOST }}",
                 "port": "${{ env.NODE_PORT }}",
-                "webBasePath": "panel",
-                "username": "${{ env.NODE_USERNAME }}",
-                "password": "${{ env.NODE_PASSWORD }}",
+                "basePath": "panel",
+                "apiToken": "${{ env.NODE_API_TOKEN }}",
             }
         ],
     )
@@ -85,21 +84,23 @@ def test_resolves_env_templates_in_any_json_string_field(tmp_path: Path, monkeyp
 
     assert state.nodes[0].host == "resolved.example.test"
     assert state.nodes[0].port == 443
-    assert state.nodes[0].username == "admin"
-    assert state.nodes[0].password == "secret"
+    assert state.nodes[0].base_path == "/panel/"
+    assert state.nodes[0].api_token == "api-token"
     assert state.subscription.profile_title == "base64:UmVzb2x2ZWQ="
 
 
-def test_keeps_env_template_when_variable_is_absent(tmp_path: Path) -> None:
+def test_rejects_unresolved_env_template_with_file_context(tmp_path: Path) -> None:
     write_json(tmp_path / "nodes.json", valid_nodes())
     write_json(tmp_path / "clients.json", valid_clients())
     write_json(tmp_path / "inbounds.json", valid_inbounds())
     write_json(tmp_path / "subscription.json", {})
 
-    state = JsonStateStore(tmp_path).load_state()
+    with pytest.raises(StateValidationError) as error:
+        JsonStateStore(tmp_path).load_state()
 
-    assert state.nodes[0].username == "${{ env.EU_USERNAME }}"
-    assert state.nodes[0].password == "${{ env.EU_PASSWORD }}"
+    message = str(error.value)
+    assert "nodes.json" in message
+    assert "EU_API_TOKEN" in message
 
 
 def test_rejects_unknown_inbound_type_with_file_and_field(tmp_path: Path) -> None:
@@ -145,7 +146,7 @@ def test_verify_ready_rejects_missing_required_file(tmp_path: Path) -> None:
 
 
 def test_verify_ready_accepts_complete_data_directory(tmp_path: Path) -> None:
-    write_json(tmp_path / "nodes.json", valid_nodes())
+    write_json(tmp_path / "nodes.json", [])
     write_json(tmp_path / "clients.json", valid_clients())
     write_json(tmp_path / "inbounds.json", valid_inbounds())
     write_json(tmp_path / "subscription.json", {})

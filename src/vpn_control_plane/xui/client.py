@@ -18,10 +18,6 @@ class XuiError(RuntimeError):
     pass
 
 
-class XuiAuthError(XuiError):
-    pass
-
-
 class XuiApiError(XuiError):
     pass
 
@@ -39,7 +35,7 @@ class XuiNodeEndpoint:
 
     @classmethod
     def from_node(cls, node: NodeRecord) -> XuiNodeEndpoint:
-        base_path = normalize_web_base_path(node.web_base_path)
+        base_path = normalize_base_path(node.base_path)
         return cls(base_url=f"{node.scheme}://{node.host}:{node.port}{base_path}")
 
 
@@ -59,7 +55,7 @@ class XuiAddClientResult:
     client: JsonObject | None = None
 
 
-def normalize_web_base_path(value: str) -> str:
+def normalize_base_path(value: str) -> str:
     value = value.strip() or "/"
     if not value.startswith("/"):
         value = f"/{value}"
@@ -91,34 +87,10 @@ class XuiNodeClient:
         self.endpoint = XuiNodeEndpoint.from_node(node)
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=timeout, follow_redirects=False, verify=verify)
-        self._logged_in = False
 
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
-
-    async def login(self) -> None:
-        operation = "xui.login"
-        payload = {"username": self.node.username, "password": self.node.password}
-        if self.node.two_factor_code:
-            payload["twoFactorCode"] = self.node.two_factor_code
-
-        logger.info("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
-        try:
-            response = await self._client.post(self._url("/login/"), data=payload, follow_redirects=True)
-        except Exception:
-            logger.exception("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
-            raise
-        body = _response_json(response)
-        if response.status_code >= 400 or not body.get("success"):
-            message = str(body.get("msg") or body.get("message") or response.reason_phrase or "unknown error")
-            logger.warning(
-                "3x-UI operation failed",
-                extra={"node_id": self.node.id, "operation": operation, "status_code": response.status_code},
-            )
-            raise XuiAuthError(f"3x-UI login failed for node {self.node.id}: {message}")
-        self._logged_in = True
-        logger.info("Finished 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
 
     async def list_inbounds(self) -> list[XuiInbound]:
         operation = "xui.list_inbounds"
@@ -217,38 +189,24 @@ class XuiNodeClient:
             raise XuiApiError(f"3x-UI {operation} failed for node {self.node.id}: {_api_message(body)}")
 
     async def _request(self, method: str, path: str, *, operation: str, **kwargs: Any) -> httpx.Response:
-        if not self._logged_in:
-            await self.login()
         logger.info("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
+        kwargs = self._with_auth_headers(kwargs)
         try:
             response = await self._client.request(method, self._url(path), **kwargs)
         except Exception:
             logger.exception("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
             raise
-        if self._is_expired_response(response):
-            self._logged_in = False
-            await self.login()
-            response = await self._client.request(method, self._url(path), **kwargs)
         logger.info("Finished 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
         return response
 
+    def _with_auth_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        headers = httpx.Headers(kwargs.pop("headers", None))
+        headers["Authorization"] = f"Bearer {self.node.api_token}"
+        headers.setdefault("Accept", "application/json")
+        return {**kwargs, "headers": headers}
+
     def _url(self, path: str) -> str:
         return f"{self.endpoint.base_url.rstrip('/')}/{path.lstrip('/')}"
-
-    @staticmethod
-    def _is_expired_response(response: httpx.Response) -> bool:
-        if response.status_code in {401, 403}:
-            return True
-        if response.status_code in {302, 303, 307, 308} and "login" in response.headers.get("location", "").lower():
-            return True
-        content_type = response.headers.get("content-type", "")
-        if "application/json" not in content_type.lower():
-            return False
-        body = _response_json(response)
-        if body.get("success") is not False:
-            return False
-        message = _api_message(body).lower()
-        return "login" in message or "session" in message or "unauthorized" in message
 
 
 def decode_subscription_lines(text: str) -> list[str]:

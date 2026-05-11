@@ -16,9 +16,8 @@ def node(node_id: int, host: str) -> NodeRecord:
             "id": node_id,
             "host": host,
             "port": 2053,
-            "webBasePath": "panel",
-            "username": "admin",
-            "password": "password",
+            "basePath": "panel",
+            "apiToken": "token",
         }
     )
 

@@ -21,8 +21,8 @@ async def test_update_geofiles_on_all_nodes_continues_after_node_failure(tmp_pat
     write_state(
         tmp_path,
         [
-            {"id": 1, "host": "one.example.test", "port": 443, "username": "admin", "password": "password"},
-            {"id": 2, "host": "two.example.test", "port": 443, "username": "admin", "password": "password"},
+            {"id": 1, "host": "one.example.test", "port": 443, "apiToken": "token-1"},
+            {"id": 2, "host": "two.example.test", "port": 443, "apiToken": "token-2"},
         ],
     )
     updated: list[int] = []

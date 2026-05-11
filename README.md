@@ -45,6 +45,7 @@ VPN_TELEGRAM_ALLOWED_USER_IDS=123456789
 VPN_TELEGRAM_ALLOWED_CHAT_ID=
 VPN_TELEGRAM_ADMIN_IDS=123456789
 VPN_DEFAULT_VLESS_FLOW=xtls-rprx-vision
+EU_3X_UI_NODE_API_TOKEN=replace-me
 ```
 
 The public subscription URL is derived from those endpoint values. For example, the settings above generate `https://your-domain.example/sub/<client-id>`. To preserve an existing public URL, set the same domain, port, and route that clients already use.
@@ -53,7 +54,7 @@ Telegram `/start` access is closed by default. Set `VPN_TELEGRAM_ALLOWED_CHAT_ID
 
 Telegram reports are disabled by default. Set `REPORT_TELEGRAM_ENABLED=true` and `REPORT_TELEGRAM_SCHEDULE` to a five-field crontab expression such as `0 3 * * *` to send an automatic `vpn-control-plane-backup.tar.gz` report to every `VPN_TELEGRAM_ADMIN_IDS` user. The scheduler runs inside the app container started by `make up`.
 
-3x-UI geofiles updates are disabled by default. Set `GEOFILES_UPDATE_ENABLED=true` and `GEOFILES_UPDATE_SCHEDULE` to update geofiles on every configured node on a schedule. The job calls `panel/api/server/updateGeofile` and also tries `panel/api/custom-geo/update-all`; older 3x-UI nodes that do not have the custom geofiles endpoint are skipped for that part. All app cron schedules are evaluated in UTC by the app container.
+3x-UI geofiles updates are disabled by default. Set `GEOFILES_UPDATE_ENABLED=true` and `GEOFILES_UPDATE_SCHEDULE` to update geofiles on every configured node on a schedule. The job calls `panel/api/server/updateGeofile` and also tries `panel/api/custom-geo/update-all`; nodes that do not have the custom geofiles endpoint are skipped for that part. All app cron schedules are evaluated in UTC by the app container.
 
 `VPN_SUBSCRIPTION_CERT_PATH` must point to a host directory containing:
 
@@ -65,6 +66,20 @@ privkey.pem
 The bundled nginx container mounts that directory read-only and terminates TLS. It proxies only `VPN_SUBSCRIPTION_ROUTE` to the app; local operational routes such as `/backup` stay available through the app's local HTTP bind, not through public nginx.
 
 If your JSON data uses `${{ env.VAR_NAME }}` templates, define those variables in `.env` too.
+
+3x-UI v3.0.0 or newer is required. Node integration uses only the 3x-UI API token from Settings -> Security -> API Token; username/password session login is not supported. Keep the token in `.env` and reference it from `data/nodes.json`:
+
+```json
+{
+	"id": 1,
+	"host": "node.example.test",
+	"port": 2053,
+	"basePath": "/panel/",
+	"apiToken": "${{ env.EU_3X_UI_NODE_API_TOKEN }}"
+}
+```
+
+The app sends `Authorization: Bearer <token>` to `/panel/api/*` for every node request. Missing environment variables in JSON templates fail during startup, so token configuration errors are visible before the first API call.
 
 To enable encrypted secrets backups, put an SSH public key into `.env`. A quick way to use the first authorized key on the server is:
 
@@ -116,7 +131,7 @@ curl -H "Authorization: Bearer $BACKUP_HTTP_TOKEN" \
 
 For migration from an externally managed reverse proxy, configure `VPN_SUBSCRIPTION_DOMAIN`, `VPN_SUBSCRIPTION_PORT`, and `VPN_SUBSCRIPTION_ROUTE` to match the old public subscription URL, then switch traffic to the bundled nginx service.
 
-The HTTP backup contains only `nodes.json`, `clients.json`, `inbounds.json`, and `subscription.json`. Keep Telegram tokens, 3x-UI passwords, and other runtime secret values in `.env` rather than in the plain data archive.
+The HTTP backup contains only `nodes.json`, `clients.json`, `inbounds.json`, and `subscription.json`. Keep Telegram tokens, 3x-UI API tokens, and other runtime secret values in `.env` rather than in the plain data archive.
 
 Create local backups from the shared backup flows:
 

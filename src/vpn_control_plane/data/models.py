@@ -13,16 +13,14 @@ class NodeRecord(StateModel):
     id: Annotated[int, Field(ge=1)]
     host: Annotated[str, Field(min_length=1)]
     port: Annotated[int, Field(ge=1, le=65535)]
-    web_base_path: str = Field(default="/", alias="webBasePath")
-    username: Annotated[str, Field(min_length=1)]
-    password: Annotated[str, Field(min_length=1)]
-    two_factor_code: str | None = Field(default=None, alias="twoFactorCode")
+    base_path: str = Field(default="/", alias="basePath")
+    api_token: Annotated[str, Field(min_length=1)] = Field(alias="apiToken")
     scheme: Literal["http", "https"] = "https"
     label: str | None = None
 
-    @field_validator("web_base_path")
+    @field_validator("base_path")
     @classmethod
-    def normalize_web_base_path(cls, value: str) -> str:
+    def normalize_base_path(cls, value: str) -> str:
         value = value.strip() or "/"
         if not value.startswith("/"):
             value = f"/{value}"
@@ -30,13 +28,13 @@ class NodeRecord(StateModel):
             value = f"{value}/"
         return value
 
-    @field_validator("two_factor_code")
+    @field_validator("api_token")
     @classmethod
-    def normalize_two_factor_code(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def normalize_api_token(cls, value: str) -> str:
         value = value.strip()
-        return value or None
+        if not value:
+            raise ValueError("api token must not be empty")
+        return value
 
 
 class ClientRecord(StateModel):

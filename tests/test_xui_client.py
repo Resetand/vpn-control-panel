@@ -3,13 +3,12 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterator
-from urllib.parse import parse_qs
 
 import httpx
 import pytest
 
 from vpn_control_plane.data import NodeRecord
-from vpn_control_plane.xui import XuiApiError, XuiAuthError, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
+from vpn_control_plane.xui import XuiApiError, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
 
 
 def node(**overrides: object) -> NodeRecord:
@@ -17,9 +16,8 @@ def node(**overrides: object) -> NodeRecord:
         "id": 1,
         "host": "panel.example.test",
         "port": 2053,
-        "webBasePath": "secret-panel",
-        "username": "admin",
-        "password": "password",
+        "basePath": "secret-panel",
+        "apiToken": "token-123",
         "scheme": "https",
     }
     values.update(overrides)
@@ -45,57 +43,41 @@ def inbound_payload(
 
 
 @pytest.mark.asyncio
-async def test_builds_node_base_url_with_normalized_web_base_path() -> None:
-    endpoint = XuiNodeEndpoint.from_node(node(webBasePath="panel"))
+async def test_builds_node_base_url_with_normalized_base_path() -> None:
+    endpoint = XuiNodeEndpoint.from_node(node(basePath="panel"))
 
     assert endpoint.base_url == "https://panel.example.test:2053/panel/"
 
 
 @pytest.mark.asyncio
-async def test_login_posts_credentials_and_two_factor_code() -> None:
+async def test_authorizes_api_requests_with_node_api_token() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return json_response({"success": True, "msg": "ok"}, headers={"set-cookie": "session=abc"})
+        return json_response({"success": True, "obj": [inbound_payload()]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        client = XuiNodeClient(node(twoFactorCode="123456"), http_client=http_client)
-        await client.login()
+        inbounds = await XuiNodeClient(node(apiToken="token-456"), http_client=http_client).list_inbounds()
 
-    form = parse_qs(requests[0].content.decode())
-    assert str(requests[0].url) == "https://panel.example.test:2053/secret-panel/login/"
-    assert form == {"username": ["admin"], "password": ["password"], "twoFactorCode": ["123456"]}
+    assert [request.url.path for request in requests] == ["/secret-panel/panel/api/inbounds/list"]
+    assert requests[0].headers["authorization"] == "Bearer token-456"
+    assert inbounds[0].id == 1
 
 
 @pytest.mark.asyncio
-async def test_login_follows_panel_redirect() -> None:
-    paths: list[str] = []
+async def test_api_auth_error_is_not_retried_with_login() -> None:
+    requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        paths.append(request.url.path)
-        if len(paths) == 1:
-            return httpx.Response(307, headers={"location": "/secret-panel/login"})
-        return json_response({"success": True, "msg": "ok"})
+        requests.append(request)
+        return json_response({"success": False, "msg": "not found"}, status_code=404)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        await XuiNodeClient(node(), http_client=http_client).login()
+        with pytest.raises(XuiApiError, match="HTTP 404"):
+            await XuiNodeClient(node(apiToken="wrong-token"), http_client=http_client).list_inbounds()
 
-    assert paths == ["/secret-panel/login/", "/secret-panel/login"]
-
-
-@pytest.mark.asyncio
-async def test_login_failure_raises_auth_error_without_password() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return json_response({"success": False, "msg": "bad credentials"})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        client = XuiNodeClient(node(), http_client=http_client)
-        with pytest.raises(XuiAuthError) as error:
-            await client.login()
-
-    assert "bad credentials" in str(error.value)
-    assert "password" not in str(error.value)
+    assert [request.url.path for request in requests] == ["/secret-panel/panel/api/inbounds/list"]
 
 
 @pytest.mark.asyncio
@@ -104,41 +86,19 @@ async def test_list_inbounds_logs_in_and_parses_json_string_fields() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
-        if request.url.path.endswith("/login/"):
-            return json_response({"success": True})
         return json_response({"success": True, "obj": [inbound_payload(clients=[{"email": "1_123"}])]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         inbounds = await XuiNodeClient(node(), http_client=http_client).list_inbounds()
 
-    assert paths == ["/secret-panel/login/", "/secret-panel/panel/api/inbounds/list"]
+    assert paths == ["/secret-panel/panel/api/inbounds/list"]
     assert inbounds[0].settings == {"clients": [{"email": "1_123"}]}
     assert inbounds[0].stream_settings == {"network": "tcp"}
 
 
 @pytest.mark.asyncio
-async def test_relogs_in_and_retries_once_for_expired_session() -> None:
-    responses: Iterator[httpx.Response] = iter(
-        [
-            json_response({"success": True}),
-            json_response({"success": False, "msg": "please login"}),
-            json_response({"success": True}),
-            json_response({"success": True, "obj": []}),
-        ]
-    )
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return next(responses)
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        inbounds = await XuiNodeClient(node(), http_client=http_client).list_inbounds()
-
-    assert inbounds == []
-
-
-@pytest.mark.asyncio
 async def test_get_inbound_returns_none_when_api_reports_missing() -> None:
-    responses: Iterator[httpx.Response] = iter([json_response({"success": True}), json_response({"success": False})])
+    responses: Iterator[httpx.Response] = iter([json_response({"success": False})])
 
     def handler(request: httpx.Request) -> httpx.Response:
         return next(responses)
@@ -155,8 +115,6 @@ async def test_downloads_server_database_and_config_json_backups() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
-        if request.url.path.endswith("/login/"):
-            return json_response({"success": True})
         if request.url.path.endswith("/getDb"):
             return httpx.Response(200, content=b"sqlite-db")
         return httpx.Response(200, content=b'{"xray":"config"}')
@@ -167,7 +125,6 @@ async def test_downloads_server_database_and_config_json_backups() -> None:
         config = await client.get_config_json_backup()
 
     assert paths == [
-        "/secret-panel/login/",
         "/secret-panel/panel/api/server/getDb",
         "/secret-panel/panel/api/server/getConfigJson",
     ]
@@ -187,7 +144,6 @@ async def test_update_geofiles_triggers_builtin_and_custom_updates() -> None:
         await XuiNodeClient(node(), http_client=http_client).update_geofiles()
 
     assert requests == [
-        ("POST", "/secret-panel/login/"),
         ("POST", "/secret-panel/panel/api/server/updateGeofile"),
         ("POST", "/secret-panel/panel/api/custom-geo/update-all"),
     ]
@@ -207,7 +163,6 @@ async def test_update_geofiles_ignores_missing_custom_geo_endpoint() -> None:
         await XuiNodeClient(node(), http_client=http_client).update_geofiles()
 
     assert paths == [
-        "/secret-panel/login/",
         "/secret-panel/panel/api/server/updateGeofile",
         "/secret-panel/panel/api/custom-geo/update-all",
     ]
@@ -216,7 +171,9 @@ async def test_update_geofiles_ignores_missing_custom_geo_endpoint() -> None:
 @pytest.mark.asyncio
 async def test_update_geofiles_raises_when_builtin_update_fails() -> None:
     responses: Iterator[httpx.Response] = iter(
-        [json_response({"success": True}), json_response({"success": False, "msg": "update failed"})]
+        [
+            json_response({"success": False, "msg": "update failed"}),
+        ]
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -229,7 +186,7 @@ async def test_update_geofiles_raises_when_builtin_update_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_server_backup_download_raises_on_http_error() -> None:
-    responses: Iterator[httpx.Response] = iter([json_response({"success": True}), httpx.Response(500)])
+    responses: Iterator[httpx.Response] = iter([httpx.Response(500)])
 
     def handler(request: httpx.Request) -> httpx.Response:
         return next(responses)
@@ -244,7 +201,6 @@ async def test_add_client_treats_duplicate_email_as_idempotent_after_reread() ->
     existing = {"email": "1_123", "id": "existing-uuid", "subId": "legacy-sub"}
     responses: Iterator[httpx.Response] = iter(
         [
-            json_response({"success": True}),
             json_response({"success": False, "msg": "Duplicate email"}),
             json_response({"success": True, "obj": inbound_payload(clients=[dict(existing)])}),
         ]

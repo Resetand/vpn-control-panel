@@ -28,7 +28,10 @@ def resolve_env_templates(value: Any) -> Any:
         match = ENV_TEMPLATE_RE.fullmatch(value)
         if match is None:
             return value
-        return os.environ.get(match.group(1), value)
+        env_name = match.group(1)
+        if env_name not in os.environ:
+            raise ValueError(f"environment variable {env_name} is not set")
+        return os.environ[env_name]
     if isinstance(value, list):
         return [resolve_env_templates(item) for item in value]
     if isinstance(value, dict):
@@ -115,6 +118,8 @@ class JsonStateStore:
                 file_path,
                 f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}",
             ) from exc
+        except ValueError as exc:
+            raise StateValidationError(file_path, str(exc)) from exc
 
     def _load_model_list(self, file_path: Path, adapter: TypeAdapter[T], default: list[Any]) -> T:
         data = self._read_json(file_path, default)
