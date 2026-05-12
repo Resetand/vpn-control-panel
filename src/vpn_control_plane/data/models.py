@@ -69,7 +69,7 @@ class NodeInboundTagRecord(StateModel):
     label: Annotated[str, Field(min_length=1)]
     node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
     inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
-    inbound_client_tag: Annotated[str, Field(min_length=1)] = Field(alias="inboundCientTag")
+    inbound_client_tag: Annotated[str, Field(min_length=1)] = Field(alias="inboundClientTag")
 
     @field_validator("inbound_client_tag")
     @classmethod

@@ -204,7 +204,7 @@ async def test_node_inbound_tag_entries_are_skipped_during_provisioning(tmp_path
                 "label": "Shared",
                 "nodeId": 1,
                 "inboundId": 1,
-                "inboundCientTag": "shared-client",
+                "inboundClientTag": "shared-client",
             },
             {"type": "node-inbound", "label": "Personal", "nodeId": 2, "inboundId": 2},
         ],

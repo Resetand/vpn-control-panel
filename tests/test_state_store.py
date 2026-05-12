@@ -41,7 +41,7 @@ def valid_inbounds() -> list[dict[str, object]]:
             "label": "EU",
             "nodeId": 1,
             "inboundId": 1,
-            "inboundCientTag": "shared-client",
+            "inboundClientTag": "shared-client",
         },
         {"type": "external-inbound", "label": "Extra", "uri": "vless://example#Extra"},
     ]

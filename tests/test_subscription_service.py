@@ -238,7 +238,7 @@ async def test_node_inbound_tag_uses_tagged_xui_client(tmp_path: Path) -> None:
                     "label": "Shared",
                     "nodeId": 1,
                     "inboundId": 1,
-                    "inboundCientTag": "shared-client",
+                    "inboundClientTag": "shared-client",
                 }
             ],
         ),
