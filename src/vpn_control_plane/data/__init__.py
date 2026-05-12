@@ -4,6 +4,7 @@ from vpn_control_plane.data.models import (
     ExternalInboundRecord,
     InboundRecord,
     NodeInboundRecord,
+    NodeInboundTagRecord,
     NodeRecord,
     SubscriptionMetadata,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "InboundRecord",
     "JsonStateStore",
     "NodeInboundRecord",
+    "NodeInboundTagRecord",
     "NodeRecord",
     "StateValidationError",
     "SubscriptionMetadata",

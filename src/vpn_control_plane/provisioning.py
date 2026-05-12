@@ -108,7 +108,7 @@ class ProvisioningService:
     ) -> ProvisioningResult:
         state = self._store.load_state()
         existing_record = next((client for client in state.clients if client.id == client_id), None)
-        node_inbounds = [inbound for inbound in state.inbounds if isinstance(inbound, NodeInboundRecord)]
+        node_inbounds = provisioning_node_inbounds(state.inbounds)
         if not node_inbounds:
             raise ProvisioningError("no node-inbound entries are configured")
 
@@ -243,3 +243,17 @@ class ProvisioningService:
         next_clients.append(record)
         self._store.save_clients(next_clients)
         return record
+
+
+def provisioning_node_inbounds(inbounds: list[object]) -> list[NodeInboundRecord]:
+    selected: list[NodeInboundRecord] = []
+    seen: set[tuple[int, int]] = set()
+    for inbound in inbounds:
+        if not isinstance(inbound, NodeInboundRecord):
+            continue
+        key = (inbound.node_id, inbound.inbound_id)
+        if key in seen:
+            continue
+        selected.append(inbound)
+        seen.add(key)
+    return selected

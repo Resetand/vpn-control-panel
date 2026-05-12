@@ -62,15 +62,22 @@ class NodeInboundRecord(StateModel):
     label: Annotated[str, Field(min_length=1)]
     node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
     inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
-    permanent_client_email: str | None = Field(default=None, alias="permanentClientEmail")
 
-    @field_validator("permanent_client_email")
+
+class NodeInboundTagRecord(StateModel):
+    type: Literal["node-inbound-tag"]
+    label: Annotated[str, Field(min_length=1)]
+    node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
+    inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
+    inbound_client_tag: Annotated[str, Field(min_length=1)] = Field(alias="inboundCientTag")
+
+    @field_validator("inbound_client_tag")
     @classmethod
-    def normalize_permanent_client_email(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def normalize_inbound_client_tag(cls, value: str) -> str:
         value = value.strip()
-        return value or None
+        if not value:
+            raise ValueError("inbound client tag must not be empty")
+        return value
 
 
 class ExternalInboundRecord(StateModel):
@@ -79,7 +86,7 @@ class ExternalInboundRecord(StateModel):
     uri: Annotated[str, Field(min_length=1)]
 
 
-InboundRecord = Annotated[NodeInboundRecord | ExternalInboundRecord, Field(discriminator="type")]
+InboundRecord = Annotated[NodeInboundRecord | NodeInboundTagRecord | ExternalInboundRecord, Field(discriminator="type")]
 
 
 class SubscriptionMetadata(StateModel):

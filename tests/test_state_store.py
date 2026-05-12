@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from vpn_control_plane.data import ClientRecord, JsonStateStore, StateValidationError, SubscriptionMetadata
+from vpn_control_plane.data import (
+    ClientRecord,
+    JsonStateStore,
+    NodeInboundTagRecord,
+    StateValidationError,
+    SubscriptionMetadata,
+)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -31,11 +37,11 @@ def valid_clients() -> list[dict[str, object]]:
 def valid_inbounds() -> list[dict[str, object]]:
     return [
         {
-            "type": "node-inbound",
+            "type": "node-inbound-tag",
             "label": "EU",
             "nodeId": 1,
             "inboundId": 1,
-            "permanentClientEmail": "shared-client",
+            "inboundCientTag": "shared-client",
         },
         {"type": "external-inbound", "label": "Extra", "uri": "vless://example#Extra"},
     ]
@@ -53,8 +59,9 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: py
     assert state.nodes[0].base_path == "/panel/"
     assert state.nodes[0].api_token == "eu-token"
     assert state.clients[0].effective_sub_id == "legacy-sub-id"
-    assert state.inbounds[0].type == "node-inbound"
-    assert state.inbounds[0].permanent_client_email == "shared-client"
+    assert isinstance(state.inbounds[0], NodeInboundTagRecord)
+    assert state.inbounds[0].type == "node-inbound-tag"
+    assert state.inbounds[0].inbound_client_tag == "shared-client"
     assert state.subscription.profile_title == "base64:VGVzdA=="
     assert state.subscription.routing_enable is True
 

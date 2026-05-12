@@ -17,10 +17,13 @@ from vpn_control_plane.data import (
     ExternalInboundRecord,
     JsonStateStore,
     NodeInboundRecord,
+    NodeInboundTagRecord,
     NodeRecord,
     SubscriptionMetadata,
 )
 from vpn_control_plane.xui import XuiInbound, XuiNodeClient, build_xui_share_links
+
+NodeSubscriptionInbound = NodeInboundRecord | NodeInboundTagRecord
 
 
 class SubscriptionError(RuntimeError):
@@ -156,7 +159,7 @@ class SubscriptionService:
         self,
         xui_inbound: XuiInbound | None,
         node: NodeRecord,
-        inbound: NodeInboundRecord,
+        inbound: NodeSubscriptionInbound,
         client: ClientRecord,
         node_errors: list[str],
         traffic: SubscriptionTraffic,
@@ -167,12 +170,13 @@ class SubscriptionService:
             _add_client_traffic(traffic, xui_inbound, inbound, client)
             if not _xui_inbound_is_enabled(xui_inbound.raw.get("enable", True)):
                 return []
+            client_email = _inbound_client_tag(inbound)
             links = build_xui_share_links(
                 xui_inbound,
                 fallback_address=node.host,
                 sub_id=client.effective_sub_id,
-                client_email=inbound.permanent_client_email,
-                fallback_email=None if inbound.permanent_client_email else f"{inbound.inbound_id}_{client.id}",
+                client_email=client_email,
+                fallback_email=None if client_email else f"{inbound.inbound_id}_{client.id}",
                 remark=inbound.label,
             )
             if not links:
@@ -392,7 +396,7 @@ def _parse_subscription_userinfo(value: str | None) -> dict[str, str]:
 def _add_client_traffic(
     traffic: SubscriptionTraffic,
     xui_inbound: object,
-    inbound: NodeInboundRecord,
+    inbound: NodeSubscriptionInbound,
     client: ClientRecord,
 ) -> None:
     raw = getattr(xui_inbound, "raw", {})
@@ -400,7 +404,7 @@ def _add_client_traffic(
     if not isinstance(stats, list):
         return
 
-    client_email = inbound.permanent_client_email
+    client_email = _inbound_client_tag(inbound)
     fallback_email = None if client_email else f"{inbound.inbound_id}_{client.id}"
     for stat in stats:
         if _traffic_stat_matches_client(
@@ -424,6 +428,12 @@ def _traffic_stat_matches_client(
     if client_email:
         return _text(stat.get("email")) == client_email
     return _text(stat.get("subId")) == sub_id or bool(fallback_email and _text(stat.get("email")) == fallback_email)
+
+
+def _inbound_client_tag(inbound: NodeSubscriptionInbound) -> str | None:
+    if isinstance(inbound, NodeInboundTagRecord):
+        return inbound.inbound_client_tag
+    return None
 
 
 def _text(value: object) -> str:

@@ -222,5 +222,3 @@ async def test_decode_subscription_lines_accepts_base64_and_plain_text() -> None
 
     assert decode_subscription_lines(encoded) == ["vless://one#One", "trojan://two#Two"]
     assert decode_subscription_lines("vless://plain#Plain\n") == ["vless://plain#Plain"]
-
-

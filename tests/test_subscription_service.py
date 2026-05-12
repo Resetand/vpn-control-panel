@@ -228,17 +228,17 @@ async def test_builds_node_and_external_links_in_inbounds_file_order(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_permanent_client_email_uses_shared_xui_client(tmp_path: Path) -> None:
+async def test_node_inbound_tag_uses_tagged_xui_client(tmp_path: Path) -> None:
     service = service_with_fakes(
         prepare_store(
             tmp_path,
             inbounds=[
                 {
-                    "type": "node-inbound",
+                    "type": "node-inbound-tag",
                     "label": "Shared",
                     "nodeId": 1,
                     "inboundId": 1,
-                    "permanentClientEmail": "shared-client",
+                    "inboundCientTag": "shared-client",
                 }
             ],
         ),

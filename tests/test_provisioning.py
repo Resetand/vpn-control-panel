@@ -195,6 +195,49 @@ async def test_external_inbounds_are_skipped_during_provisioning(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_node_inbound_tag_entries_are_skipped_during_provisioning(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        inbounds=[
+            {
+                "type": "node-inbound-tag",
+                "label": "Shared",
+                "nodeId": 1,
+                "inboundId": 1,
+                "inboundCientTag": "shared-client",
+            },
+            {"type": "node-inbound", "label": "Personal", "nodeId": 2, "inboundId": 2},
+        ],
+    )
+    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
+
+    result = await service.ensure_client("123", comment="Skip shared")
+
+    assert result.created == 1
+    assert 1 not in clients
+    assert len(clients[2].added) == 1
+    assert clients[2].added[0][1]["email"] == "2_123"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_node_inbound_entries_are_provisioned_once(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        inbounds=[
+            {"type": "node-inbound", "label": "Primary", "nodeId": 1, "inboundId": 1},
+            {"type": "node-inbound", "label": "Alias", "nodeId": 1, "inboundId": 1},
+        ],
+    )
+    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")]})
+
+    result = await service.ensure_client("123", comment="Dedup")
+
+    assert result.created == 1
+    assert len(clients[1].added) == 1
+    assert clients[1].added[0][1]["email"] == "1_123"
+
+
+@pytest.mark.asyncio
 async def test_payload_generation_supports_vmess_trojan_and_shadowsocks(tmp_path: Path) -> None:
     store = prepare_store(tmp_path)
     service, _clients = service_with_fakes(store, {1: [inbound(1)], 2: [inbound(2)]})
