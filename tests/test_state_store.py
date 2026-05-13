@@ -9,6 +9,7 @@ from vpn_control_plane.data import (
     ClientRecord,
     JsonStateStore,
     NodeInboundTagRecord,
+    NodeRecord,
     StateValidationError,
     SubscriptionMetadata,
 )
@@ -64,6 +65,33 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: py
     assert state.inbounds[0].inbound_client_tag == "shared-client"
     assert state.subscription.profile_title == "base64:VGVzdA=="
     assert state.subscription.routing_enable is True
+
+
+def test_node_monitoring_defaults_to_enabled() -> None:
+    node = NodeRecord.model_validate(
+        {
+            "id": 1,
+            "host": "node.example.test",
+            "port": 443,
+            "apiToken": "token",
+        }
+    )
+
+    assert node.monitoring is True
+
+
+def test_node_monitoring_can_be_disabled() -> None:
+    node = NodeRecord.model_validate(
+        {
+            "id": 1,
+            "host": "node.example.test",
+            "port": 443,
+            "apiToken": "token",
+            "monitoring": False,
+        }
+    )
+
+    assert node.monitoring is False
 
 
 def test_resolves_env_templates_in_any_json_string_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

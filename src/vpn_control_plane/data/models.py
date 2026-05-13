@@ -17,6 +17,7 @@ class NodeRecord(StateModel):
     api_token: Annotated[str, Field(min_length=1)] = Field(alias="apiToken")
     scheme: Literal["http", "https"] = "https"
     label: str | None = None
+    monitoring: bool = True
 
     @field_validator("base_path")
     @classmethod

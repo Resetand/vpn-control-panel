@@ -40,6 +40,12 @@ REPORT_TELEGRAM_ENABLED=false
 REPORT_TELEGRAM_SCHEDULE="0 3 * * *"
 GEOFILES_UPDATE_ENABLED=false
 GEOFILES_UPDATE_SCHEDULE="0 3 * * *"
+VPN_MONITORING_ALERTS_ENABLED=false
+VPN_MONITORING_POLL_INTERVAL_SECONDS=30
+VPN_MONITORING_FAILURE_DURATION_SECONDS=60
+VPN_MONITORING_CPU_THRESHOLD_PERCENT=90
+VPN_MONITORING_RAM_THRESHOLD_PERCENT=90
+VPN_MONITORING_ALERT_COOLDOWN_SECONDS=3600
 VPN_TELEGRAM_BOT_TOKEN=replace-me
 VPN_TELEGRAM_ALLOWED_USER_IDS=123456789
 VPN_TELEGRAM_ALLOWED_CHAT_ID=
@@ -55,6 +61,8 @@ Telegram `/start` access is closed by default. Set `VPN_TELEGRAM_ALLOWED_CHAT_ID
 Telegram reports are disabled by default. Set `REPORT_TELEGRAM_ENABLED=true` and `REPORT_TELEGRAM_SCHEDULE` to a five-field crontab expression such as `0 3 * * *` to send an automatic `vpn-control-plane-backup.tar.gz` report to every `VPN_TELEGRAM_ADMIN_IDS` user. The scheduler runs inside the app container started by `make up`.
 
 3x-UI geofiles updates are disabled by default. Set `GEOFILES_UPDATE_ENABLED=true` and `GEOFILES_UPDATE_SCHEDULE` to update geofiles on every configured node on a schedule. The job calls `panel/api/server/updateGeofile` and also tries `panel/api/custom-geo/update-all`; nodes that do not have the custom geofiles endpoint are skipped for that part. All app cron schedules are evaluated in UTC by the app container.
+
+Monitoring alerts are disabled by default. Set `VPN_MONITORING_ALERTS_ENABLED=true` to poll configured nodes through the 3x-UI status API and send Telegram admin alerts for sustained 3x-UI unavailability, Xray down state, high CPU, and high RAM. Defaults are a 30 second poll interval, 60 second sustained failure duration, 90 percent CPU/RAM thresholds, and a 1 hour cooldown for repeat alerts with the same node and event category. To opt a node out while monitoring is globally enabled, add `"monitoring": false` to that node in `data/nodes.json`.
 
 `VPN_SUBSCRIPTION_CERT_PATH` must point to a host directory containing:
 

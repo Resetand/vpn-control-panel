@@ -55,6 +55,33 @@ class XuiAddClientResult:
     client: JsonObject | None = None
 
 
+@dataclass(frozen=True)
+class XuiMemoryStatus:
+    current: int
+    total: int
+
+    @property
+    def usage_percent(self) -> float:
+        if self.total <= 0:
+            return 0.0
+        return self.current / self.total * 100
+
+
+@dataclass(frozen=True)
+class XuiXrayStatus:
+    state: str
+    error_message: str
+    version: str
+
+
+@dataclass(frozen=True)
+class XuiNodeStatus:
+    cpu_percent: float
+    memory: XuiMemoryStatus
+    xray: XuiXrayStatus
+    raw: JsonObject
+
+
 def normalize_base_path(value: str) -> str:
     value = value.strip() or "/"
     if not value.startswith("/"):
@@ -129,6 +156,20 @@ class XuiNodeClient:
             operation="xui.update_custom_geofiles",
             ignore_not_found=True,
         )
+
+    async def get_status(self) -> XuiNodeStatus:
+        operation = "xui.get_status"
+        body = await self._request_json("GET", "/panel/api/server/status", operation=operation)
+        if not body.get("success"):
+            logger.warning("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
+            raise XuiApiError(f"3x-UI status failed for node {self.node.id}: {_api_message(body)}")
+        raw_status = body.get("obj")
+        if not isinstance(raw_status, dict):
+            raise XuiApiError(f"3x-UI status returned invalid payload for node {self.node.id}")
+        try:
+            return _parse_status(raw_status)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise XuiApiError(f"3x-UI status returned malformed payload for node {self.node.id}: {exc}") from exc
 
     async def add_client(self, inbound_id: int, client_payload: JsonObject) -> XuiAddClientResult:
         email = str(client_payload.get("email") or "")
@@ -264,6 +305,25 @@ def _parse_json_object(value: Any) -> JsonObject:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _parse_status(raw_status: JsonObject) -> XuiNodeStatus:
+    memory = raw_status["mem"]
+    xray = raw_status["xray"]
+    if not isinstance(memory, dict):
+        raise TypeError("mem must be an object")
+    if not isinstance(xray, dict):
+        raise TypeError("xray must be an object")
+    return XuiNodeStatus(
+        cpu_percent=float(raw_status["cpu"]),
+        memory=XuiMemoryStatus(current=int(memory["current"]), total=int(memory["total"])),
+        xray=XuiXrayStatus(
+            state=str(xray["state"]),
+            error_message=str(xray.get("errorMsg") or ""),
+            version=str(xray.get("version") or ""),
+        ),
+        raw=raw_status,
+    )
 
 
 def _api_message(body: JsonObject) -> str:

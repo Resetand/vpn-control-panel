@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from vpn_control_plane.config import Settings
 
 
@@ -54,3 +57,61 @@ def test_settings_parse_geofiles_update_schedule() -> None:
 
     assert settings.geofiles_update_enabled is True
     assert settings.geofiles_update_schedule == "15 4 * * 1"
+
+
+def test_settings_monitoring_defaults() -> None:
+    settings = Settings.model_validate(
+        {
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+
+    assert settings.monitoring_alerts_enabled is False
+    assert settings.monitoring_poll_interval_seconds == 30
+    assert settings.monitoring_failure_duration_seconds == 60
+    assert settings.monitoring_cpu_threshold_percent == 90.0
+    assert settings.monitoring_ram_threshold_percent == 90.0
+    assert settings.monitoring_alert_cooldown_seconds == 3600
+
+
+def test_settings_monitoring_custom_values() -> None:
+    settings = Settings.model_validate(
+        {
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+            "VPN_MONITORING_ALERTS_ENABLED": "true",
+            "VPN_MONITORING_POLL_INTERVAL_SECONDS": "15",
+            "VPN_MONITORING_FAILURE_DURATION_SECONDS": "120",
+            "VPN_MONITORING_CPU_THRESHOLD_PERCENT": "80.5",
+            "VPN_MONITORING_RAM_THRESHOLD_PERCENT": "75.5",
+            "VPN_MONITORING_ALERT_COOLDOWN_SECONDS": "600",
+        }
+    )
+
+    assert settings.monitoring_alerts_enabled is True
+    assert settings.monitoring_poll_interval_seconds == 15
+    assert settings.monitoring_failure_duration_seconds == 120
+    assert settings.monitoring_cpu_threshold_percent == 80.5
+    assert settings.monitoring_ram_threshold_percent == 75.5
+    assert settings.monitoring_alert_cooldown_seconds == 600
+
+
+def test_settings_monitoring_rejects_invalid_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {
+                "VPN_TELEGRAM_BOT_TOKEN": "token",
+                "VPN_TELEGRAM_ADMIN_IDS": "1",
+                "VPN_MONITORING_POLL_INTERVAL_SECONDS": "0",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {
+                "VPN_TELEGRAM_BOT_TOKEN": "token",
+                "VPN_TELEGRAM_ADMIN_IDS": "1",
+                "VPN_MONITORING_CPU_THRESHOLD_PERCENT": "101",
+            }
+        )

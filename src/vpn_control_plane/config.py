@@ -84,6 +84,27 @@ class Settings(BaseSettings):
     report_telegram_schedule: str = Field(default="0 3 * * *", validation_alias="REPORT_TELEGRAM_SCHEDULE")
     geofiles_update_enabled: bool = Field(default=False, validation_alias="GEOFILES_UPDATE_ENABLED")
     geofiles_update_schedule: str = Field(default="0 3 * * *", validation_alias="GEOFILES_UPDATE_SCHEDULE")
+    monitoring_alerts_enabled: bool = Field(default=False, validation_alias="VPN_MONITORING_ALERTS_ENABLED")
+    monitoring_poll_interval_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=30,
+        validation_alias="VPN_MONITORING_POLL_INTERVAL_SECONDS",
+    )
+    monitoring_failure_duration_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=60,
+        validation_alias="VPN_MONITORING_FAILURE_DURATION_SECONDS",
+    )
+    monitoring_cpu_threshold_percent: Annotated[float, Field(ge=0, le=100)] = Field(
+        default=90.0,
+        validation_alias="VPN_MONITORING_CPU_THRESHOLD_PERCENT",
+    )
+    monitoring_ram_threshold_percent: Annotated[float, Field(ge=0, le=100)] = Field(
+        default=90.0,
+        validation_alias="VPN_MONITORING_RAM_THRESHOLD_PERCENT",
+    )
+    monitoring_alert_cooldown_seconds: Annotated[int, Field(ge=1)] = Field(
+        default=3600,
+        validation_alias="VPN_MONITORING_ALERT_COOLDOWN_SECONDS",
+    )
 
     @field_validator("backup_secrets_ssh_key")
     @classmethod
@@ -140,4 +161,3 @@ class Settings(BaseSettings):
             self.subscription_port,
             self.subscription_route,
         )
-

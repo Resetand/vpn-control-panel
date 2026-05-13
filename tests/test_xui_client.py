@@ -42,6 +42,20 @@ def inbound_payload(
     }
 
 
+def status_payload(
+    *,
+    cpu: float = 3.0,
+    mem_current: int = 50,
+    mem_total: int = 200,
+    xray_state: str = "running",
+) -> dict[str, object]:
+    return {
+        "cpu": cpu,
+        "mem": {"current": mem_current, "total": mem_total},
+        "xray": {"state": xray_state, "errorMsg": "", "version": "26.4.25"},
+    }
+
+
 @pytest.mark.asyncio
 async def test_builds_node_base_url_with_normalized_base_path() -> None:
     endpoint = XuiNodeEndpoint.from_node(node(basePath="panel"))
@@ -182,6 +196,46 @@ async def test_update_geofiles_raises_when_builtin_update_fails() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         with pytest.raises(XuiApiError, match="update failed"):
             await XuiNodeClient(node(), http_client=http_client).update_geofiles()
+
+
+@pytest.mark.asyncio
+async def test_get_status_parses_cpu_memory_and_xray_state() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True, "obj": status_payload(cpu=12.5, xray_state="running")})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        status = await XuiNodeClient(node(), http_client=http_client).get_status()
+
+    assert [request.url.path for request in requests] == ["/secret-panel/panel/api/server/status"]
+    assert requests[0].headers["authorization"] == "Bearer token-123"
+    assert status.cpu_percent == 12.5
+    assert status.memory.current == 50
+    assert status.memory.total == 200
+    assert status.memory.usage_percent == 25.0
+    assert status.xray.state == "running"
+
+
+@pytest.mark.asyncio
+async def test_get_status_raises_on_failed_status_response() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"success": False, "msg": "status failed"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(XuiApiError, match="node 1: status failed"):
+            await XuiNodeClient(node(), http_client=http_client).get_status()
+
+
+@pytest.mark.asyncio
+async def test_get_status_raises_on_malformed_status_payload() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"success": True, "obj": {"cpu": 1, "mem": {}, "xray": {"state": "running"}}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(XuiApiError, match="malformed payload for node 1"):
+            await XuiNodeClient(node(), http_client=http_client).get_status()
 
 
 @pytest.mark.asyncio
