@@ -64,11 +64,12 @@ def status(
     mem_current: int = 10,
     mem_total: int = 100,
     xray_state: str = "running",
+    xray_error_message: str = "",
 ) -> XuiNodeStatus:
     return XuiNodeStatus(
         cpu_percent=cpu,
         memory=XuiMemoryStatus(current=mem_current, total=mem_total),
-        xray=XuiXrayStatus(state=xray_state, error_message="", version="26.4.25"),
+        xray=XuiXrayStatus(state=xray_state, error_message=xray_error_message, version="26.4.25"),
         raw={},
     )
 
@@ -231,8 +232,10 @@ async def test_monitoring_poll_alerts_for_sustained_status_failure(tmp_path: Pat
     await service.poll_once()
 
     assert len(notifier.messages) == 1
-    assert "3x-UI unavailable" in notifier.messages[0]
-    assert "Category: xui_unavailable" in notifier.messages[0]
+    assert "!!! VPN MONITORING ALERT !!!" in notifier.messages[0]
+    assert "Problem: 3x-UI panel is unavailable" in notifier.messages[0]
+    assert "Details: connection failed" in notifier.messages[0]
+    assert "Event: xui_unavailable" in notifier.messages[0]
 
 
 @pytest.mark.asyncio
@@ -247,7 +250,15 @@ async def test_monitoring_poll_alerts_for_xray_cpu_and_ram(tmp_path: Path) -> No
     )
 
     def client_factory(_node: NodeRecord) -> FakeStatusClient:
-        return FakeStatusClient(status(cpu=95.0, mem_current=95, mem_total=100, xray_state="stopped"))
+        return FakeStatusClient(
+            status(
+                cpu=95.0,
+                mem_current=95,
+                mem_total=100,
+                xray_state="stopped",
+                xray_error_message="failed to load config",
+            )
+        )
 
     service = MonitoringService(
         settings(tmp_path),
@@ -262,11 +273,12 @@ async def test_monitoring_poll_alerts_for_xray_cpu_and_ram(tmp_path: Path) -> No
 
     assert len(notifier.messages) == 3
     joined_messages = "\n".join(notifier.messages)
-    assert "Category: xray_down" in joined_messages
-    assert "Category: cpu_high" in joined_messages
-    assert "Observed: 95.0%" in joined_messages
-    assert "Category: ram_high" in joined_messages
-    assert "Threshold: > 90.0%" in joined_messages
+    assert "Event: xray_down" in joined_messages
+    assert "Details: state=stopped; error=failed to load config" in joined_messages
+    assert "Event: cpu_high" in joined_messages
+    assert "Details: 95.0%" in joined_messages
+    assert "Event: ram_high" in joined_messages
+    assert "Expected: > 90.0%" in joined_messages
 
 
 def test_app_does_not_start_monitoring_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

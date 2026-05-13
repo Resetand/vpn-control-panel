@@ -110,15 +110,19 @@ def format_alert_message(candidate: AlertCandidate, *, duration_seconds: int) ->
     node = candidate.node
     node_name = node.label or node.host
     lines = [
-        f"Monitoring alert: {candidate.condition.title}",
+        "🚨🚨🚨🚨",
+        "!!! VPN MONITORING ALERT !!!",
+        "",
+        f"Node {node_name} needs attention.",
+        f"Problem: {candidate.condition.title}",
         f"Node: {node_name} (id {node.id}, {node.host}:{node.port})",
-        f"Category: {candidate.condition.category}",
-        f"Duration: at least {duration_seconds}s",
+        f"Active for: at least {duration_seconds}s",
     ]
     if candidate.condition.observed is not None:
-        lines.append(f"Observed: {candidate.condition.observed}")
+        lines.append(f"Details: {candidate.condition.observed}")
     if candidate.condition.threshold is not None:
-        lines.append(f"Threshold: {candidate.condition.threshold}")
+        lines.append(f"Expected: {candidate.condition.threshold}")
+    lines.append(f"Event: {candidate.condition.category}")
     return "\n".join(lines)
 
 

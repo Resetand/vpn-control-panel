@@ -24,7 +24,7 @@ def select_monitored_nodes(nodes: list[NodeRecord]) -> list[NodeRecord]:
 
 
 def xui_unavailable_condition(reason: str) -> ActiveCondition:
-    return ActiveCondition(category=EVENT_XUI_UNAVAILABLE, title="3x-UI unavailable", observed=reason)
+    return ActiveCondition(category=EVENT_XUI_UNAVAILABLE, title="3x-UI panel is unavailable", observed=reason)
 
 
 def detect_status_conditions(
@@ -35,11 +35,14 @@ def detect_status_conditions(
 ) -> list[ActiveCondition]:
     conditions: list[ActiveCondition] = []
     if status.xray.state != "running":
+        observed = f"state={status.xray.state}"
+        if status.xray.error_message:
+            observed = f"{observed}; error={status.xray.error_message}"
         conditions.append(
             ActiveCondition(
                 category=EVENT_XRAY_DOWN,
                 title="Xray is not running",
-                observed=status.xray.state,
+                observed=observed,
                 threshold="running",
             )
         )
