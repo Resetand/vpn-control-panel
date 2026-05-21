@@ -404,6 +404,86 @@ async def test_missing_node_client_is_ignored_without_breaking_external_links(tm
 
 
 @pytest.mark.asyncio
+async def test_allowed_client_ids_includes_inbound_when_client_is_listed(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            inbounds=[
+                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1, "allowedClientIds": ["123"]},
+            ],
+        ),
+        {(1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")])},
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_allowed_client_ids_excludes_inbound_when_client_is_not_listed(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            inbounds=[
+                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1, "allowedClientIds": ["999"]},
+                {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
+            ],
+        ),
+        {(1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")])},
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == ["vless://external#External"]
+    assert subscription.node_errors == ()
+
+
+@pytest.mark.asyncio
+async def test_allowed_client_ids_empty_allows_all_clients(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            inbounds=[
+                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1, "allowedClientIds": []},
+            ],
+        ),
+        {(1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")])},
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_allowed_client_ids_filters_external_inbound(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            inbounds=[
+                {
+                    "type": "external-inbound",
+                    "label": "VIP Only",
+                    "uri": "vless://external#VIP",
+                    "allowedClientIds": ["999"],
+                },
+                {"type": "external-inbound", "label": "Public", "uri": "vless://public#Public"},
+            ],
+        ),
+        {},
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == ["vless://public#Public"]
+
+
+@pytest.mark.asyncio
 async def test_renders_base64_text_response_with_metadata_headers(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,

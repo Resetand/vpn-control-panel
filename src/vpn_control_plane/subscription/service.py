@@ -106,6 +106,8 @@ class SubscriptionService:
 
         try:
             for inbound in state.inbounds:
+                if inbound.allowed_client_ids and client.id not in inbound.allowed_client_ids:
+                    continue
                 if isinstance(inbound, ExternalInboundRecord):
                     if inbound.uri.strip():
                         links.append(_ensure_fragment_label(inbound.uri.strip(), inbound.label))

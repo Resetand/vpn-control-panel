@@ -63,6 +63,7 @@ class NodeInboundRecord(StateModel):
     label: Annotated[str, Field(min_length=1)]
     node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
     inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
+    allowed_client_ids: list[str] = Field(default_factory=list, alias="allowedClientIds")
 
 
 class NodeInboundTagRecord(StateModel):
@@ -71,6 +72,7 @@ class NodeInboundTagRecord(StateModel):
     node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
     inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
     inbound_client_tag: Annotated[str, Field(min_length=1)] = Field(alias="inboundClientTag")
+    allowed_client_ids: list[str] = Field(default_factory=list, alias="allowedClientIds")
 
     @field_validator("inbound_client_tag")
     @classmethod
@@ -85,6 +87,7 @@ class ExternalInboundRecord(StateModel):
     type: Literal["external-inbound"]
     label: Annotated[str, Field(min_length=1)]
     uri: Annotated[str, Field(min_length=1)]
+    allowed_client_ids: list[str] = Field(default_factory=list, alias="allowedClientIds")
 
 
 InboundRecord = Annotated[NodeInboundRecord | NodeInboundTagRecord | ExternalInboundRecord, Field(discriminator="type")]
