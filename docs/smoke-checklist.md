@@ -11,6 +11,7 @@ Use this checklist against a disposable 3x-UI test node before cutover. Run it w
 - `nodes.json` points to the 3x-UI test node panel API.
 - `inbounds.json` includes at least one `node-inbound` for the test node and one `external-inbound` raw URI.
 - The public subscription route is configured to the exact legacy path that existing clients use.
+- Existing clients have been migrated with `make migrate-subscription-ids` before stack restart when upgrading from predictable subscription paths.
 
 ## Provision A New Client
 
@@ -20,6 +21,7 @@ Use this checklist against a disposable 3x-UI test node before cutover. Run it w
 4. In 3x-UI, confirm a new client exists for every configured `node-inbound`.
 5. Confirm each 3x-UI client email is exactly `<inbound_id>_<telegram_user_id>` and `subId` equals the subscription identifier.
 6. Open the subscription URL in a VPN client and confirm the node-generated links connect successfully.
+7. Confirm the new record in `clients.json` has `subId` and does not have `legacySubId`.
 
 ## Returning User Idempotency
 
@@ -36,6 +38,7 @@ Use this checklist against a disposable 3x-UI test node before cutover. Run it w
 4. Confirm decoded links end with a trailing newline.
 5. Confirm link order matches the item order in `inbounds.json`.
 6. Confirm response headers include configured metadata such as `profile-title`, `profile-update-interval`, `profile-web-page-url`, `support-url`, `routing`, and `routing-enable`.
+7. For a migrated client, request `legacySubId` and confirm the response is HTTP 302 to the random `subId` URL.
 
 ## Public Surface
 

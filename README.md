@@ -54,7 +54,9 @@ VPN_DEFAULT_VLESS_FLOW=xtls-rprx-vision
 EU_3X_UI_NODE_API_TOKEN=replace-me
 ```
 
-The public subscription URL is derived from those endpoint values. For example, the settings above generate `https://your-domain.example/sub/<client-id>`. To preserve an existing public URL, set the same domain, port, and route that clients already use.
+The public subscription URL is derived from those endpoint values. New clients receive an unguessable random `subId`, so their public URL looks like `https://your-domain.example/sub/<subId>`. To preserve an existing public URL, set the same domain, port, and route that clients already use.
+
+When upgrading data that used Telegram/user IDs as subscription paths, run `make migrate-subscription-ids` once before restarting the stack. The migration writes a new random `subId` for each client and stores the previous public identifier in `legacySubId`, so old links redirect to the new subscription URL.
 
 Telegram `/start` access is closed by default. Set `VPN_TELEGRAM_ALLOWED_CHAT_ID` to require membership in a Telegram chat/channel, set `VPN_TELEGRAM_ALLOWED_USER_IDS=*` to allow everyone, or set `VPN_TELEGRAM_ALLOWED_USER_IDS` to a comma-separated allowlist of Telegram user IDs.
 

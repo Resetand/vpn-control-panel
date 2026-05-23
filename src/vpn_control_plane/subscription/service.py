@@ -194,7 +194,7 @@ class SubscriptionService:
             if client.effective_sub_id == requested_sub_id:
                 return client
         for client in clients:
-            if client.id == requested_sub_id:
+            if requested_sub_id in client.legacy_subscription_ids:
                 return client
         return None
 

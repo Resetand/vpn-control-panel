@@ -32,7 +32,14 @@ def valid_nodes() -> list[dict[str, object]]:
 
 
 def valid_clients() -> list[dict[str, object]]:
-    return [{"id": "123456789", "comment": "Kirill", "subId": "legacy-sub-id"}]
+    return [
+        {
+            "id": "123456789",
+            "comment": "Kirill",
+            "subId": "personal-token",
+            "legacySubId": "123456789",
+        }
+    ]
 
 
 def valid_inbounds() -> list[dict[str, object]]:
@@ -59,7 +66,8 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: py
 
     assert state.nodes[0].base_path == "/panel/"
     assert state.nodes[0].api_token == "eu-token"
-    assert state.clients[0].effective_sub_id == "legacy-sub-id"
+    assert state.clients[0].effective_sub_id == "personal-token"
+    assert state.clients[0].legacy_subscription_ids == {"123456789"}
     assert isinstance(state.inbounds[0], NodeInboundTagRecord)
     assert state.inbounds[0].type == "node-inbound-tag"
     assert state.inbounds[0].inbound_client_tag == "shared-client"
@@ -92,6 +100,13 @@ def test_node_monitoring_can_be_disabled() -> None:
     )
 
     assert node.monitoring is False
+
+
+def test_legacy_client_without_subscription_id_keeps_client_id_alias() -> None:
+    client = ClientRecord.model_validate({"id": "123", "comment": "Existing"})
+
+    assert client.effective_sub_id == "123"
+    assert client.legacy_subscription_ids == {"123"}
 
 
 def test_resolves_env_templates_in_any_json_string_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

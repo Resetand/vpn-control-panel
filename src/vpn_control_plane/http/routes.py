@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Header, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 
 from vpn_control_plane.backup import DATA_BACKUP_FILE_NAME, build_data_backup
 from vpn_control_plane.config import Settings
@@ -40,6 +41,8 @@ def create_router(settings: Settings, store: JsonStateStore) -> APIRouter:
             built_subscription = await subscription_service.build(sub_id)
         except UnknownSubscriptionClientError as exc:
             raise HTTPException(status_code=404, detail="subscription not found") from exc
+        if sub_id.strip().strip("/") != built_subscription.client.effective_sub_id:
+            return RedirectResponse(built_subscription.public_url, status_code=status.HTTP_302_FOUND)
         return render_subscription_by_accept(built_subscription, accept)
 
     return router

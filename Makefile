@@ -1,4 +1,4 @@
-.PHONY: init init-data restore-data backup-data backup-secrets up run down stop logs ps build test lint format typecheck clean
+.PHONY: init init-data restore-data backup-data backup-secrets migrate-subscription-ids up run down stop logs ps build test lint format typecheck clean
 
 COMPOSE ?= docker compose
 ENV_FILE ?= .env
@@ -31,6 +31,9 @@ backup-data: $(ENV_FILE) init-data
 backup-secrets: $(ENV_FILE)
 	mkdir -p backups
 	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup secrets --env-file /app/$(ENV_FILE) --output /app/backups/env.encrypted
+
+migrate-subscription-ids: $(ENV_FILE) init-data
+	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.migrations.subscription_ids --data-dir /app/data
 
 start: init
 	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx

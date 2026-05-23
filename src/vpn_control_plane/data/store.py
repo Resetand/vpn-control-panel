@@ -97,7 +97,7 @@ class JsonStateStore:
         )
 
     def save_clients(self, clients: list[ClientRecord]) -> None:
-        self._save_model(self._clients, TypeAdapter(list[ClientRecord]), clients)
+        self._save_model(self._clients, TypeAdapter(list[ClientRecord]), clients, exclude_none=True)
 
     def save_subscription(self, subscription: SubscriptionMetadata) -> None:
         self._save_model(self._subscription, TypeAdapter(SubscriptionMetadata), subscription)
@@ -138,10 +138,17 @@ class JsonStateStore:
             message = first_error.get("msg", "validation failed")
             raise StateValidationError(file_path, f"{location}: {message}") from exc
 
-    def _save_model(self, file_path: Path, adapter: TypeAdapter[T], value: T) -> None:
+    def _save_model(
+        self,
+        file_path: Path,
+        adapter: TypeAdapter[T],
+        value: T,
+        *,
+        exclude_none: bool = False,
+    ) -> None:
         with self._lock:
             validated = self._validate(file_path, adapter, value)
-            data = adapter.dump_python(validated, by_alias=True, mode="json")
+            data = adapter.dump_python(validated, by_alias=True, mode="json", exclude_none=exclude_none)
             self._write_json_atomic(file_path, data)
 
     def _write_json_atomic(self, file_path: Path, data: Any) -> None:

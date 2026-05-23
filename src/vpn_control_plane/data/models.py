@@ -42,8 +42,9 @@ class ClientRecord(StateModel):
     id: Annotated[str, Field(min_length=1)]
     comment: str = ""
     sub_id: str | None = Field(default=None, alias="subId")
+    legacy_sub_id: str | None = Field(default=None, alias="legacySubId")
 
-    @field_validator("id", "sub_id")
+    @field_validator("id", "sub_id", "legacy_sub_id")
     @classmethod
     def strip_identifier(cls, value: str | None) -> str | None:
         if value is None:
@@ -56,6 +57,14 @@ class ClientRecord(StateModel):
     @property
     def effective_sub_id(self) -> str:
         return self.sub_id or self.id
+
+    @property
+    def legacy_subscription_ids(self) -> set[str]:
+        if self.legacy_sub_id is not None:
+            return {self.legacy_sub_id}
+        if self.sub_id is not None:
+            return set()
+        return {self.id}
 
 
 class NodeInboundRecord(StateModel):

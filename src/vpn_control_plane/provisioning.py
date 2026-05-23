@@ -4,7 +4,7 @@ import asyncio
 import base64
 import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +17,7 @@ class ProvisioningError(RuntimeError):
 
 
 JsonObject = dict[str, Any]
+SUBSCRIPTION_ID_BYTES = 18
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,10 @@ def generate_manual_client_id(existing_client_ids: set[str] | None = None) -> st
             return candidate
 
 
+def generate_subscription_id() -> str:
+    return secrets.token_urlsafe(SUBSCRIPTION_ID_BYTES)
+
+
 class ProvisioningService:
     def __init__(
         self,
@@ -51,12 +56,14 @@ class ProvisioningService:
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
         random_bytes: Callable[[int], bytes] = secrets.token_bytes,
+        subscription_id_factory: Callable[[], str] = generate_subscription_id,
     ) -> None:
         self._store = store
         self._default_vless_flow = default_vless_flow.strip()
         self._node_client_factory = node_client_factory or XuiNodeClient
         self._uuid_factory = uuid_factory
         self._random_bytes = random_bytes
+        self._subscription_id_factory = subscription_id_factory
         self._locks_guard = asyncio.Lock()
         self._client_locks: dict[str, asyncio.Lock] = {}
 
@@ -119,7 +126,7 @@ class ProvisioningService:
         }
         inbound_cache: dict[tuple[int, int], XuiInbound] = {}
         existing_by_inbound: dict[tuple[int, int], JsonObject] = {}
-        discovered_sub_id: str | None = existing_record.sub_id if existing_record else None
+        stored_sub_id = existing_record.sub_id if existing_record else None
 
         try:
             for meta_inbound in node_inbounds:
@@ -133,10 +140,8 @@ class ProvisioningService:
                 existing_client = find_client_by_email(inbound, legacy_client_email(meta_inbound.inbound_id, client_id))
                 if existing_client is not None:
                     existing_by_inbound[(meta_inbound.node_id, meta_inbound.inbound_id)] = existing_client
-                    if discovered_sub_id is None and existing_client.get("subId"):
-                        discovered_sub_id = str(existing_client["subId"])
 
-            final_sub_id = discovered_sub_id or client_id
+            final_sub_id = stored_sub_id or self._subscription_id_factory()
             created = 0
             reused = len(existing_by_inbound)
 
@@ -237,7 +242,8 @@ class ProvisioningService:
         record = ClientRecord(
             id=client_id,
             comment=existing_record.comment if existing_record else comment,
-            subId=sub_id if sub_id != client_id else None,
+            subId=sub_id,
+            legacySubId=_legacy_sub_id(existing_record),
         )
         next_clients = [client for client in clients if client.id != client_id]
         next_clients.append(record)
@@ -245,7 +251,7 @@ class ProvisioningService:
         return record
 
 
-def provisioning_node_inbounds(inbounds: list[object]) -> list[NodeInboundRecord]:
+def provisioning_node_inbounds(inbounds: Sequence[object]) -> list[NodeInboundRecord]:
     selected: list[NodeInboundRecord] = []
     seen: set[tuple[int, int]] = set()
     for inbound in inbounds:
@@ -257,3 +263,13 @@ def provisioning_node_inbounds(inbounds: list[object]) -> list[NodeInboundRecord
         selected.append(inbound)
         seen.add(key)
     return selected
+
+
+def _legacy_sub_id(existing_record: ClientRecord | None) -> str | None:
+    if existing_record is None:
+        return None
+    if existing_record.legacy_sub_id is not None:
+        return existing_record.legacy_sub_id
+    if existing_record.sub_id is None:
+        return existing_record.id
+    return None

@@ -303,11 +303,11 @@ async def test_build_adds_inbound_label_fragment_when_external_link_has_no_name(
 
 
 @pytest.mark.asyncio
-async def test_effective_sub_id_resolves_legacy_client_and_fetches_with_legacy_id(tmp_path: Path) -> None:
+async def test_sub_id_resolves_client_and_fetches_by_xui_fallback_email(tmp_path: Path) -> None:
     service = SubscriptionService(
         prepare_store(
             tmp_path,
-            clients=[{"id": "123", "comment": "Migrated", "subId": "legacy-sub"}],
+            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
             inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub",
@@ -320,12 +320,12 @@ async def test_effective_sub_id_resolves_legacy_client_and_fetches_with_legacy_i
         ),
     )
 
-    subscription = await service.build("legacy-sub")
+    subscription = await service.build("personal-token")
 
     assert subscription.links == [
         "vless://legacy-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
     ]
-    assert subscription.public_url == "https://resetand.my.id:2096/sub/legacy-sub"
+    assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
 
 
 @pytest.mark.asyncio
@@ -333,7 +333,7 @@ async def test_client_id_request_resolves_client_with_separate_effective_sub_id(
     service = SubscriptionService(
         prepare_store(
             tmp_path,
-            clients=[{"id": "123", "comment": "Migrated", "subId": "legacy-sub"}],
+            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
             inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub",
@@ -351,7 +351,51 @@ async def test_client_id_request_resolves_client_with_separate_effective_sub_id(
     assert subscription.links == [
         "vless://legacy-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
     ]
-    assert subscription.public_url == "https://resetand.my.id:2096/sub/legacy-sub"
+    assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
+
+
+@pytest.mark.asyncio
+async def test_sub_id_is_canonical_and_legacy_sub_id_remains_allowed(tmp_path: Path) -> None:
+    service = SubscriptionService(
+        prepare_store(
+            tmp_path,
+            clients=[
+                {
+                    "id": "123",
+                    "comment": "Migrated",
+                    "subId": "personal-token",
+                    "legacySubId": "123",
+                }
+            ],
+            inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
+        ),
+        public_base_url="https://resetand.my.id:2096/sub",
+        node_client_factory=cast(
+            Any,
+            lambda node: FakeXuiClient(
+                node,
+                {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="legacy-sub", client_id="legacy-uuid")])},
+            ),
+        ),
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://legacy-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
+    ]
+    assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
+
+
+@pytest.mark.asyncio
+async def test_sub_id_disables_legacy_ids_when_legacy_sub_id_is_absent(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(tmp_path, clients=[{"id": "123", "comment": "New", "subId": "personal-token"}]),
+        default_node_inbounds(),
+    )
+
+    with pytest.raises(UnknownSubscriptionClientError):
+        await service.build("123")
 
 
 @pytest.mark.asyncio
@@ -417,9 +461,7 @@ async def test_allowed_client_ids_includes_inbound_when_client_is_listed(tmp_pat
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
+    assert subscription.links == ["vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"]
 
 
 @pytest.mark.asyncio
@@ -455,9 +497,7 @@ async def test_allowed_client_ids_empty_allows_all_clients(tmp_path: Path) -> No
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
+    assert subscription.links == ["vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"]
 
 
 @pytest.mark.asyncio
@@ -705,6 +745,38 @@ def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None
     assert base64.b64decode(payload["subscription"]["encoded"]).decode("utf-8") == "vless://external#Germany\n"
     assert payload["links"] == [{"name": "Germany", "protocol": "VLESS", "url": "vless://external#Germany"}]
     assert payload["recommended_clients"]["android"]["name"] == "Happ"
+
+
+def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[
+            {
+                "id": "123",
+                "comment": "Existing",
+                "subId": "personal-token",
+                "legacySubId": "123",
+            }
+        ],
+        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    response = TestClient(app).get("/sub/123", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://example.test/sub/personal-token"
 
 
 def test_subscription_route_keeps_legacy_base64_for_wildcard_accept(tmp_path: Path) -> None:

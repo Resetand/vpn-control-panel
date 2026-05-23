@@ -13,6 +13,7 @@ from vpn_control_plane.provisioning import ProvisioningService, legacy_client_em
 from vpn_control_plane.xui import XuiAddClientResult, XuiInbound
 
 JsonObject = dict[str, Any]
+SUBSCRIPTION_ID = "eHh4eHh4eHh4eHh4eHh4eHh4"
 
 
 def write_json(path: Path, value: object) -> None:
@@ -107,6 +108,7 @@ def service_with_fakes(
         node_client_factory=cast(Any, factory),
         uuid_factory=lambda: uuid.UUID("11111111-1111-1111-1111-111111111111"),
         random_bytes=lambda size: b"x" * size,
+        subscription_id_factory=lambda: SUBSCRIPTION_ID,
     )
     return service, clients
 
@@ -125,14 +127,21 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
     result = await service.ensure_telegram_user(123, comment="Kirill", username="resetand")
 
     assert result.client.id == "123"
+    assert result.client.effective_sub_id == SUBSCRIPTION_ID
     assert result.created == 2
     assert clients[1].added[0][1]["email"] == "1_123"
-    assert clients[1].added[0][1]["subId"] == "123"
+    assert clients[1].added[0][1]["subId"] == SUBSCRIPTION_ID
     assert clients[1].added[0][1]["tgId"] == 123
     assert clients[1].added[0][1]["flow"] == "xtls-rprx-vision"
     assert clients[2].added[0][1]["email"] == "2_123"
     saved = json.loads((tmp_path / "clients.json").read_text(encoding="utf-8"))
-    assert saved == [{"id": "123", "comment": "Kirill (@resetand)", "subId": None}]
+    assert saved == [
+        {
+            "id": "123",
+            "comment": "Kirill (@resetand)",
+            "subId": SUBSCRIPTION_ID,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -154,7 +163,14 @@ async def test_returning_client_does_not_create_or_overwrite_existing_key_materi
     assert existing_one["id"] == "keep-uuid"
     assert existing_two["password"] == "keep-password"
     saved = json.loads((tmp_path / "clients.json").read_text(encoding="utf-8"))
-    assert saved == [{"id": "123", "comment": "Existing", "subId": "legacy-sub"}]
+    assert saved == [
+        {
+            "id": "123",
+            "comment": "Existing",
+            "subId": SUBSCRIPTION_ID,
+            "legacySubId": "123",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -173,7 +189,7 @@ async def test_partial_provisioning_creates_only_missing_inbounds_with_existing_
     assert result.created == 1
     assert clients[1].added == []
     assert clients[2].added[0][1]["email"] == "2_123"
-    assert clients[2].added[0][1]["subId"] == "legacy-sub"
+    assert clients[2].added[0][1]["subId"] == SUBSCRIPTION_ID
     assert clients[2].added[0][1]["password"] == "11111111-1111-1111-1111-111111111111"
 
 
