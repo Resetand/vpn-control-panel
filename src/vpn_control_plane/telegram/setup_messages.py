@@ -9,7 +9,7 @@ PLATFORM_ORDER = ("ios", "android", "windows", "macos")
 
 
 def build_subscription_caption(subscription_url: str) -> str:
-    return f"🔑 Ваш ключ-ссылка: <code>{html.escape(subscription_url)}</code>"
+    return "\n".join(["🔑 Ваш ключ-ссылка:", f"<code>{html.escape(subscription_url)}</code>"])
 
 
 def build_setup_instructions() -> str:
