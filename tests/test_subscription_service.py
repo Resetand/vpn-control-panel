@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from vpn_control_plane.app import create_app
 from vpn_control_plane.config import Settings, build_public_subscription_base_url, normalize_subscription_route
-from vpn_control_plane.data import JsonStateStore, NodeRecord
+from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.http.routes import create_router
 from vpn_control_plane.subscription import (
     SubscriptionService,
@@ -39,39 +39,61 @@ def prepare_store(
     nodes: list[JsonObject] | None = None,
     inbounds: list[JsonObject] | None = None,
     subscription: JsonObject | None = None,
-) -> JsonStateStore:
+) -> ControlPlaneStore:
     write_json(
-        tmp_path / "nodes.json",
-        nodes
-        or [
-            {
-                "id": 1,
-                "host": "node-1.example.test",
-                "port": 443,
-                "basePath": "/panel/",
-                "apiToken": "token-1",
-            },
-            {
-                "id": 2,
-                "host": "node-2.example.test",
-                "port": 443,
-                "basePath": "/panel/",
-                "apiToken": "token-2",
-            },
-        ],
+        tmp_path / "data.json",
+        build_state(
+            clients=clients or [{"id": "123", "comment": "Existing"}],
+            nodes=nodes,
+            inbounds=inbounds,
+            subscription=subscription or {},
+        ),
     )
-    write_json(tmp_path / "clients.json", clients or [{"id": "123", "comment": "Existing"}])
-    write_json(
-        tmp_path / "inbounds.json",
-        inbounds
-        or [
-            {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1},
-            {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
-            {"type": "node-inbound", "label": "Two", "nodeId": 1, "inboundId": 2},
-        ],
-    )
-    write_json(tmp_path / "subscription.json", subscription or {})
-    return JsonStateStore(tmp_path)
+    return ControlPlaneStore(tmp_path / "data.json")
+
+
+def build_state(
+    *,
+    clients: list[JsonObject],
+    nodes: list[JsonObject] | None = None,
+    inbounds: list[JsonObject] | None = None,
+    subscription: JsonObject,
+) -> JsonObject:
+    raw_nodes = nodes or [
+        {"id": 1, "host": "node-1.example.test", "port": 443, "basePath": "/panel/", "apiToken": "token-1"},
+        {"id": 2, "host": "node-2.example.test", "port": 443, "basePath": "/panel/", "apiToken": "token-2"},
+    ]
+    raw_inbounds = inbounds or [
+        {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+        {"label": "External", "uri": "vless://external#External"},
+        {"label": "Two", "nodeId": 1, "xuiInboundId": 2},
+    ]
+    node_inbounds_by_id: dict[int, list[JsonObject]] = {int(node["id"]): [] for node in raw_nodes}
+    external_inbounds: list[JsonObject] = []
+    default_tags: list[str] = []
+    for index, item in enumerate(raw_inbounds):
+        if "uri" in item:
+            tag = str(item.get("tag") or f"external-{index}")
+            external_inbounds.append({"tag": tag, "label": item["label"], "uri": item["uri"]})
+        else:
+            tag = str(item.get("tag") or f"node-{item['nodeId']}-{item['xuiInboundId']}-{index}")
+            node_inbounds_by_id[int(item["nodeId"])].append(
+                {"tag": tag, "label": item["label"], "xuiInboundId": item["xuiInboundId"]}
+            )
+        default_tags.append(tag)
+
+    state_nodes = []
+    for node in raw_nodes:
+        state_node = dict(node)
+        state_node["inbounds"] = node.get("inbounds", node_inbounds_by_id[int(node["id"])])
+        state_nodes.append(state_node)
+    return {
+        "nodes": state_nodes,
+        "externalInbounds": external_inbounds,
+        "clients": clients,
+        "defaultClientInboundTags": default_tags,
+        "subscription": subscription,
+    }
 
 
 class FakeXuiClient:
@@ -106,7 +128,7 @@ class FakeXuiClient:
 
 
 def service_with_fakes(
-    store: JsonStateStore,
+    store: ControlPlaneStore,
     inbounds_by_key: Mapping[tuple[int, int], XuiInbound | Exception | None],
 ) -> SubscriptionService:
     def factory(node: NodeRecord) -> FakeXuiClient:
@@ -228,40 +250,6 @@ async def test_builds_node_and_external_links_in_inbounds_file_order(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_node_inbound_tag_uses_tagged_xui_client(tmp_path: Path) -> None:
-    service = service_with_fakes(
-        prepare_store(
-            tmp_path,
-            inbounds=[
-                {
-                    "type": "node-inbound-tag",
-                    "label": "Shared",
-                    "nodeId": 1,
-                    "inboundId": 1,
-                    "inboundClientTag": "shared-client",
-                }
-            ],
-        ),
-        {
-            (1, 1): xui_inbound(
-                1,
-                clients=[
-                    vless_client(client_id="personal-uuid"),
-                    vless_client(sub_id="shared-sub", email="shared-client", client_id="shared-uuid"),
-                ],
-            )
-        },
-    )
-
-    subscription = await service.build("123")
-
-    assert subscription.links == [
-        "vless://shared-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#Shared"
-    ]
-    assert subscription.node_errors == ()
-
-
-@pytest.mark.asyncio
 async def test_disabled_node_inbound_is_ignored_without_node_error(tmp_path: Path) -> None:
     service = service_with_fakes(
         prepare_store(tmp_path),
@@ -290,7 +278,7 @@ async def test_build_adds_inbound_label_fragment_when_external_link_has_no_name(
     service = service_with_fakes(
         prepare_store(
             tmp_path,
-            inbounds=[{"type": "external-inbound", "label": "🇩🇪 Германия ⭐", "uri": "vless://external?type=tcp"}],
+            inbounds=[{"label": "🇩🇪 Германия ⭐", "uri": "vless://external?type=tcp"}],
         ),
         {},
     )
@@ -308,7 +296,7 @@ async def test_sub_id_resolves_client_and_fetches_by_xui_fallback_email(tmp_path
         prepare_store(
             tmp_path,
             clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
-            inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
+            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub",
         node_client_factory=cast(
@@ -334,7 +322,7 @@ async def test_client_id_request_resolves_client_with_separate_effective_sub_id(
         prepare_store(
             tmp_path,
             clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
-            inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
+            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub",
         node_client_factory=cast(
@@ -367,7 +355,7 @@ async def test_sub_id_is_canonical_and_legacy_sub_id_remains_allowed(tmp_path: P
                     "legacySubId": "123",
                 }
             ],
-            inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
+            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub",
         node_client_factory=cast(
@@ -404,9 +392,9 @@ async def test_partial_node_failure_keeps_available_links(tmp_path: Path) -> Non
         prepare_store(
             tmp_path,
             inbounds=[
-                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1},
-                {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
-                {"type": "node-inbound", "label": "Two", "nodeId": 2, "inboundId": 2},
+                {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+                {"label": "External", "uri": "vless://external#External"},
+                {"label": "Two", "nodeId": 2, "xuiInboundId": 2},
             ],
         ),
         {
@@ -434,8 +422,8 @@ async def test_missing_node_client_is_ignored_without_breaking_external_links(tm
         prepare_store(
             tmp_path,
             inbounds=[
-                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1},
-                {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
+                {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+                {"label": "External", "uri": "vless://external#External"},
             ],
         ),
         {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="other", email="1_other")])},
@@ -448,90 +436,14 @@ async def test_missing_node_client_is_ignored_without_breaking_external_links(tm
 
 
 @pytest.mark.asyncio
-async def test_allowed_client_ids_includes_inbound_when_client_is_listed(tmp_path: Path) -> None:
-    service = service_with_fakes(
-        prepare_store(
-            tmp_path,
-            inbounds=[
-                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1, "allowedClientIds": ["123"]},
-            ],
-        ),
-        {(1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")])},
-    )
-
-    subscription = await service.build("123")
-
-    assert subscription.links == ["vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"]
-
-
-@pytest.mark.asyncio
-async def test_allowed_client_ids_excludes_inbound_when_client_is_not_listed(tmp_path: Path) -> None:
-    service = service_with_fakes(
-        prepare_store(
-            tmp_path,
-            inbounds=[
-                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1, "allowedClientIds": ["999"]},
-                {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
-            ],
-        ),
-        {(1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")])},
-    )
-
-    subscription = await service.build("123")
-
-    assert subscription.links == ["vless://external#External"]
-    assert subscription.node_errors == ()
-
-
-@pytest.mark.asyncio
-async def test_allowed_client_ids_empty_allows_all_clients(tmp_path: Path) -> None:
-    service = service_with_fakes(
-        prepare_store(
-            tmp_path,
-            inbounds=[
-                {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1, "allowedClientIds": []},
-            ],
-        ),
-        {(1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")])},
-    )
-
-    subscription = await service.build("123")
-
-    assert subscription.links == ["vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"]
-
-
-@pytest.mark.asyncio
-async def test_allowed_client_ids_filters_external_inbound(tmp_path: Path) -> None:
-    service = service_with_fakes(
-        prepare_store(
-            tmp_path,
-            inbounds=[
-                {
-                    "type": "external-inbound",
-                    "label": "VIP Only",
-                    "uri": "vless://external#VIP",
-                    "allowedClientIds": ["999"],
-                },
-                {"type": "external-inbound", "label": "Public", "uri": "vless://public#Public"},
-            ],
-        ),
-        {},
-    )
-
-    subscription = await service.build("123")
-
-    assert subscription.links == ["vless://public#Public"]
-
-
-@pytest.mark.asyncio
 async def test_renders_base64_text_response_with_metadata_headers(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
         subscription={
-            "profile-title": "Family VPN",
-            "profile-update-interval": 24,
-            "subscription-userinfo": "upload=0; download=4460105213; total=2147483648",
-            "support-url": "https://support.example.test",
+            "profileTitle": "Family VPN",
+            "profileUpdateInterval": 24,
+            "subscriptionUserinfo": "upload=0; download=4460105213; total=2147483648",
+            "supportUrl": "https://support.example.test",
             "announce": "Maintenance tonight",
             "routing": HAPP_ROUTING_RULES,
         },
@@ -564,10 +476,10 @@ async def test_renders_userinfo_with_aggregated_client_traffic(tmp_path: Path) -
     store = prepare_store(
         tmp_path,
         inbounds=[
-            {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1},
-            {"type": "node-inbound", "label": "Two", "nodeId": 1, "inboundId": 2},
+            {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+            {"label": "Two", "nodeId": 1, "xuiInboundId": 2},
         ],
-        subscription={"subscription-userinfo": "upload=0; download=0; total=2147483648; expire=1710442799"},
+        subscription={"subscriptionUserinfo": "upload=0; download=0; total=2147483648; expire=1710442799"},
     )
     service = service_with_fakes(
         store,
@@ -621,7 +533,7 @@ async def test_build_uses_list_inbounds_data_for_links_and_traffic(tmp_path: Pat
     service = SubscriptionService(
         prepare_store(
             tmp_path,
-            inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}],
+            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub/",
         node_client_factory=cast(Any, ListOnlyXuiClient),
@@ -647,7 +559,7 @@ async def test_omits_userinfo_when_traffic_metadata_is_not_configured(tmp_path: 
 @pytest.mark.asyncio
 async def test_routing_enable_can_disable_configured_happ_routing_rules(tmp_path: Path) -> None:
     service = service_with_fakes(
-        prepare_store(tmp_path, subscription={"routing-enable": False, "routing": HAPP_ROUTING_RULES}),
+        prepare_store(tmp_path, subscription={"routingEnable": False, "routing": HAPP_ROUTING_RULES}),
         default_node_inbounds(),
     )
 
@@ -662,7 +574,7 @@ def test_subscription_route_returns_404_for_unknown_client(tmp_path: Path) -> No
     store = prepare_store(tmp_path, clients=[])
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/legacy-sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
@@ -680,12 +592,12 @@ def test_subscription_route_returns_404_for_unknown_client(tmp_path: Path) -> No
 def test_subscription_route_returns_html_for_browser_accept(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
-        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
-        subscription={"profile-title": "Family VPN"},
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"profileTitle": "Family VPN"},
     )
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
@@ -717,12 +629,12 @@ def test_subscription_route_returns_html_for_browser_accept(tmp_path: Path) -> N
 def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
-        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
-        subscription={"profile-title": "Family VPN"},
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"profileTitle": "Family VPN"},
     )
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
@@ -758,11 +670,11 @@ def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Pat
                 "legacySubId": "123",
             }
         ],
-        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
     )
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
@@ -782,11 +694,11 @@ def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Pat
 def test_subscription_route_keeps_legacy_base64_for_wildcard_accept(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
-        inbounds=[{"type": "external-inbound", "label": "Germany", "uri": "vless://external#Germany"}],
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
     )
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
@@ -808,7 +720,7 @@ def test_create_app_exposes_health_after_configuration_and_state_load(tmp_path: 
     prepare_store(tmp_path)
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "1",
@@ -825,7 +737,7 @@ def test_create_app_exposes_health_after_configuration_and_state_load(tmp_path: 
 def test_create_app_fails_before_serving_when_required_state_is_missing(tmp_path: Path) -> None:
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "1",
@@ -842,7 +754,7 @@ def test_backup_endpoint_requires_token_and_returns_control_plane_json_archive(t
     write_json(tmp_path / "runtime-cache.json", {"ignored": True})
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "1",
@@ -861,17 +773,17 @@ def test_backup_endpoint_requires_token_and_returns_control_plane_json_archive(t
     assert response.headers["content-type"] == "application/gzip"
     assert response.headers["content-disposition"] == 'attachment; filename="vpn-control-plane-data.tar.gz"'
     with tarfile.open(fileobj=BytesIO(response.content), mode="r:gz") as archive:
-        assert sorted(archive.getnames()) == ["clients.json", "inbounds.json", "nodes.json", "subscription.json"]
-        subscription_file = archive.extractfile("subscription.json")
-        assert subscription_file is not None
-        assert json.loads(subscription_file.read().decode("utf-8")) == {"announce": "Maintenance"}
+        assert sorted(archive.getnames()) == ["data.json"]
+        data_file = archive.extractfile("data.json")
+        assert data_file is not None
+        assert json.loads(data_file.read().decode("utf-8"))["subscription"] == {"announce": "Maintenance"}
 
 
 def test_backup_endpoint_is_disabled_without_configured_token(tmp_path: Path) -> None:
     prepare_store(tmp_path)
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "1",

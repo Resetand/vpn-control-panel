@@ -4,20 +4,13 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from threading import RLock
 from typing import Any, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
-from vpn_control_plane.data.models import (
-    ClientRecord,
-    ControlPlaneState,
-    InboundRecord,
-    NodeRecord,
-    SubscriptionMetadata,
-)
+from vpn_control_plane.data.models import ClientRecord, ControlPlaneState, NodeRecord, SubscriptionMetadata
 
 T = TypeVar("T")
 ENV_TEMPLATE_RE = re.compile(r"^\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$")
@@ -45,111 +38,81 @@ class StateValidationError(ValueError):
         super().__init__(f"{file_path}: {message}")
 
 
-class JsonStateStore:
-    def __init__(self, data_dir: Path | str) -> None:
-        self.data_dir = Path(data_dir)
+class ControlPlaneStore:
+    def __init__(self, data_file: Path | str) -> None:
         self._lock = RLock()
-        self._nodes = self.data_dir / "nodes.json"
-        self._clients = self.data_dir / "clients.json"
-        self._inbounds = self.data_dir / "inbounds.json"
-        self._subscription = self.data_dir / "subscription.json"
+        self._data_file = Path(data_file)
+
+    @property
+    def data_file(self) -> Path:
+        return self._data_file
 
     def verify_ready(self) -> None:
-        if not self.data_dir.exists():
-            raise StateValidationError(self.data_dir, "data directory does not exist")
-        if not self.data_dir.is_dir():
-            raise StateValidationError(self.data_dir, "data path is not a directory")
-
-        for file_path in (self._nodes, self._clients, self._inbounds, self._subscription):
-            if not file_path.exists():
-                raise StateValidationError(file_path, "required data file is missing")
-            if not file_path.is_file():
-                raise StateValidationError(file_path, "required data path is not a file")
-            try:
-                with file_path.open("r", encoding="utf-8"):
-                    pass
-            except OSError as exc:
-                raise StateValidationError(file_path, f"required data file is not readable: {exc}") from exc
+        if not self._data_file.parent.exists():
+            raise StateValidationError(self._data_file.parent, "data file parent directory does not exist")
+        if not self._data_file.exists():
+            raise StateValidationError(self._data_file, "required data file is missing")
+        if not self._data_file.is_file():
+            raise StateValidationError(self._data_file, "required data path is not a file")
+        try:
+            with self._data_file.open("r", encoding="utf-8"):
+                pass
+        except OSError as exc:
+            raise StateValidationError(self._data_file, f"required data file is not readable: {exc}") from exc
 
     def load_state(self) -> ControlPlaneState:
         with self._lock:
-            return ControlPlaneState(
-                nodes=self.load_nodes(),
-                clients=self.load_clients(),
-                inbounds=self.load_inbounds(),
-                subscription=self.load_subscription(),
-            )
+            data = self._read_json()
+            return self._validate(TypeAdapter(ControlPlaneState), data)
 
     def load_nodes(self) -> list[NodeRecord]:
-        return self._load_model_list(self._nodes, TypeAdapter(list[NodeRecord]), default=[])
+        return self.load_state().nodes
 
     def load_clients(self) -> list[ClientRecord]:
-        return self._load_model_list(self._clients, TypeAdapter(list[ClientRecord]), default=[])
-
-    def load_inbounds(self) -> list[InboundRecord]:
-        return self._load_model_list(self._inbounds, TypeAdapter(list[InboundRecord]), default=[])
+        return self.load_state().clients
 
     def load_subscription(self) -> SubscriptionMetadata:
-        return self._load_model(
-            self._subscription,
-            TypeAdapter(SubscriptionMetadata),
-            default_factory=SubscriptionMetadata,
-        )
+        return self.load_state().subscription
 
     def save_clients(self, clients: list[ClientRecord]) -> None:
-        self._save_model(self._clients, TypeAdapter(list[ClientRecord]), clients, exclude_none=True)
+        with self._lock:
+            validated_clients = self._validate(TypeAdapter(list[ClientRecord]), clients)
+            state = self.load_state().model_copy(update={"clients": validated_clients})
+            self._save_state(state)
 
     def save_subscription(self, subscription: SubscriptionMetadata) -> None:
-        self._save_model(self._subscription, TypeAdapter(SubscriptionMetadata), subscription)
+        with self._lock:
+            state = self.load_state().model_copy(update={"subscription": subscription})
+            self._save_state(state)
 
-    def _read_json(self, file_path: Path, default: T) -> Any | T:
-        if not file_path.exists():
-            return default
+    def _save_state(self, state: ControlPlaneState) -> None:
+        validated = self._validate(TypeAdapter(ControlPlaneState), state.model_dump(by_alias=True, mode="json"))
+        data = validated.model_dump(by_alias=True, mode="json", exclude_none=True)
+        self._write_json_atomic(self._data_file, data)
+
+    def _read_json(self) -> Any:
         try:
-            raw = file_path.read_text(encoding="utf-8")
+            raw = self._data_file.read_text(encoding="utf-8")
         except OSError as exc:
-            raise StateValidationError(file_path, str(exc)) from exc
-        if not raw.strip():
-            return default
+            raise StateValidationError(self._data_file, str(exc)) from exc
         try:
             return resolve_env_templates(json.loads(raw))
         except json.JSONDecodeError as exc:
             raise StateValidationError(
-                file_path,
+                self._data_file,
                 f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}",
             ) from exc
         except ValueError as exc:
-            raise StateValidationError(file_path, str(exc)) from exc
+            raise StateValidationError(self._data_file, str(exc)) from exc
 
-    def _load_model_list(self, file_path: Path, adapter: TypeAdapter[T], default: list[Any]) -> T:
-        data = self._read_json(file_path, default)
-        return self._validate(file_path, adapter, data)
-
-    def _load_model(self, file_path: Path, adapter: TypeAdapter[T], default_factory: Callable[[], Any]) -> T:
-        data = self._read_json(file_path, default_factory().model_dump(by_alias=True, mode="json"))
-        return self._validate(file_path, adapter, data)
-
-    def _validate(self, file_path: Path, adapter: TypeAdapter[T], data: Any) -> T:
+    def _validate(self, adapter: TypeAdapter[T], data: Any) -> T:
         try:
             return adapter.validate_python(data)
         except ValidationError as exc:
             first_error = exc.errors()[0]
             location = ".".join(str(part) for part in first_error.get("loc", ())) or "<root>"
             message = first_error.get("msg", "validation failed")
-            raise StateValidationError(file_path, f"{location}: {message}") from exc
-
-    def _save_model(
-        self,
-        file_path: Path,
-        adapter: TypeAdapter[T],
-        value: T,
-        *,
-        exclude_none: bool = False,
-    ) -> None:
-        with self._lock:
-            validated = self._validate(file_path, adapter, value)
-            data = adapter.dump_python(validated, by_alias=True, mode="json", exclude_none=exclude_none)
-            self._write_json_atomic(file_path, data)
+            raise StateValidationError(self._data_file, f"{location}: {message}") from exc
 
     def _write_json_atomic(self, file_path: Path, data: Any) -> None:
         file_path.parent.mkdir(parents=True, exist_ok=True)

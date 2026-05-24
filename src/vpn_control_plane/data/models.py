@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StateModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class NodeInboundRecord(StateModel):
+    tag: Annotated[str, Field(min_length=1)]
+    label: Annotated[str, Field(min_length=1)]
+    xui_inbound_id: Annotated[int, Field(ge=1)] = Field(alias="xuiInboundId")
+
+    @field_validator("tag")
+    @classmethod
+    def strip_tag(cls, value: str) -> str:
+        return _strip_nonempty(value, "inbound tag")
 
 
 class NodeRecord(StateModel):
@@ -18,6 +30,7 @@ class NodeRecord(StateModel):
     scheme: Literal["http", "https"] = "https"
     label: str | None = None
     monitoring: bool = True
+    inbounds: list[NodeInboundRecord] = Field(default_factory=list)
 
     @field_validator("base_path")
     @classmethod
@@ -32,10 +45,18 @@ class NodeRecord(StateModel):
     @field_validator("api_token")
     @classmethod
     def normalize_api_token(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("api token must not be empty")
-        return value
+        return _strip_nonempty(value, "api token")
+
+
+class ExternalInboundRecord(StateModel):
+    tag: Annotated[str, Field(min_length=1)]
+    label: Annotated[str, Field(min_length=1)]
+    uri: Annotated[str, Field(min_length=1)]
+
+    @field_validator("tag")
+    @classmethod
+    def strip_tag(cls, value: str) -> str:
+        return _strip_nonempty(value, "inbound tag")
 
 
 class ClientRecord(StateModel):
@@ -43,16 +64,21 @@ class ClientRecord(StateModel):
     comment: str = ""
     sub_id: str | None = Field(default=None, alias="subId")
     legacy_sub_id: str | None = Field(default=None, alias="legacySubId")
+    inbound_tags: list[str] | None = Field(default=None, alias="inboundTags")
 
     @field_validator("id", "sub_id", "legacy_sub_id")
     @classmethod
     def strip_identifier(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
-        if not value:
-            raise ValueError("identifier must not be empty")
-        return value
+        return _strip_nonempty(value, "identifier")
+
+    @field_validator("inbound_tags")
+    @classmethod
+    def strip_inbound_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [_strip_nonempty(tag, "inbound tag") for tag in value]
 
     @property
     def effective_sub_id(self) -> str:
@@ -67,54 +93,90 @@ class ClientRecord(StateModel):
         return {self.id}
 
 
-class NodeInboundRecord(StateModel):
-    type: Literal["node-inbound"]
-    label: Annotated[str, Field(min_length=1)]
-    node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
-    inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
-    allowed_client_ids: list[str] = Field(default_factory=list, alias="allowedClientIds")
-
-
-class NodeInboundTagRecord(StateModel):
-    type: Literal["node-inbound-tag"]
-    label: Annotated[str, Field(min_length=1)]
-    node_id: Annotated[int, Field(ge=1)] = Field(alias="nodeId")
-    inbound_id: Annotated[int, Field(ge=1)] = Field(alias="inboundId")
-    inbound_client_tag: Annotated[str, Field(min_length=1)] = Field(alias="inboundClientTag")
-    allowed_client_ids: list[str] = Field(default_factory=list, alias="allowedClientIds")
-
-    @field_validator("inbound_client_tag")
-    @classmethod
-    def normalize_inbound_client_tag(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("inbound client tag must not be empty")
-        return value
-
-
-class ExternalInboundRecord(StateModel):
-    type: Literal["external-inbound"]
-    label: Annotated[str, Field(min_length=1)]
-    uri: Annotated[str, Field(min_length=1)]
-    allowed_client_ids: list[str] = Field(default_factory=list, alias="allowedClientIds")
-
-
-InboundRecord = Annotated[NodeInboundRecord | NodeInboundTagRecord | ExternalInboundRecord, Field(discriminator="type")]
-
-
 class SubscriptionMetadata(StateModel):
-    profile_title: str | None = Field(default=None, alias="profile-title")
-    profile_update_interval: int | None = Field(default=None, alias="profile-update-interval")
-    profile_web_page_url: str | None = Field(default=None, alias="profile-web-page-url")
-    subscription_userinfo: str | None = Field(default=None, alias="subscription-userinfo")
-    support_url: str | None = Field(default=None, alias="support-url")
+    profile_title: str | None = Field(default=None, alias="profileTitle")
+    profile_update_interval: int | None = Field(default=None, alias="profileUpdateInterval")
+    profile_web_page_url: str | None = Field(default=None, alias="profileWebPageUrl")
+    subscription_userinfo: str | None = Field(default=None, alias="subscriptionUserinfo")
+    support_url: str | None = Field(default=None, alias="supportUrl")
     announce: str | None = None
     routing: str | None = None
-    routing_enable: bool | None = Field(default=None, alias="routing-enable")
+    routing_enable: bool | None = Field(default=None, alias="routingEnable")
 
 
 class ControlPlaneState(StateModel):
-    nodes: list[NodeRecord]
-    clients: list[ClientRecord]
-    inbounds: list[InboundRecord]
-    subscription: SubscriptionMetadata
+    nodes: list[NodeRecord] = Field(default_factory=list)
+    external_inbounds: list[ExternalInboundRecord] = Field(default_factory=list, alias="externalInbounds")
+    clients: list[ClientRecord] = Field(default_factory=list)
+    default_client_inbound_tags: list[str] = Field(default_factory=list, alias="defaultClientInboundTags")
+    subscription: SubscriptionMetadata = Field(default_factory=SubscriptionMetadata)
+
+    @field_validator("default_client_inbound_tags")
+    @classmethod
+    def strip_default_tags(cls, value: list[str]) -> list[str]:
+        return [_strip_nonempty(tag, "inbound tag") for tag in value]
+
+    @model_validator(mode="after")
+    def validate_inbound_tags(self) -> ControlPlaneState:
+        known_tags: set[str] = set()
+        for tag in [inbound.tag for node in self.nodes for inbound in node.inbounds]:
+            if tag in known_tags:
+                raise ValueError(f"duplicate inbound tag: {tag}")
+            known_tags.add(tag)
+        for inbound in self.external_inbounds:
+            if inbound.tag in known_tags:
+                raise ValueError(f"duplicate inbound tag: {inbound.tag}")
+            known_tags.add(inbound.tag)
+
+        self._validate_tag_list("defaultClientInboundTags", self.default_client_inbound_tags, known_tags)
+        for client in self.clients:
+            if client.inbound_tags is not None:
+                self._validate_tag_list(f"clients[{client.id}].inboundTags", client.inbound_tags, known_tags)
+        return self
+
+    @staticmethod
+    def _validate_tag_list(label: str, tags: list[str], known_tags: set[str]) -> None:
+        seen: set[str] = set()
+        for tag in tags:
+            if tag in seen:
+                raise ValueError(f"{label} contains duplicate inbound tag: {tag}")
+            seen.add(tag)
+            if tag not in known_tags:
+                raise ValueError(f"{label} references unknown inbound tag: {tag}")
+
+
+@dataclass(frozen=True)
+class NodeCatalogInbound:
+    node: NodeRecord
+    inbound: NodeInboundRecord
+
+
+@dataclass(frozen=True)
+class ExternalCatalogInbound:
+    inbound: ExternalInboundRecord
+
+
+CatalogInbound = NodeCatalogInbound | ExternalCatalogInbound
+
+
+def build_inbound_catalog(state: ControlPlaneState) -> dict[str, CatalogInbound]:
+    catalog: dict[str, CatalogInbound] = {}
+    for node in state.nodes:
+        for inbound in node.inbounds:
+            catalog[inbound.tag] = NodeCatalogInbound(node=node, inbound=inbound)
+    for external_inbound in state.external_inbounds:
+        catalog[external_inbound.tag] = ExternalCatalogInbound(inbound=external_inbound)
+    return catalog
+
+
+def effective_inbound_tags(state: ControlPlaneState, client: ClientRecord) -> list[str]:
+    if client.inbound_tags is not None:
+        return list(client.inbound_tags)
+    return list(state.default_client_inbound_tags)
+
+
+def _strip_nonempty(value: str, label: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError(f"{label} must not be empty")
+    return value

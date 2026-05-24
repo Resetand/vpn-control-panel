@@ -1,5 +1,6 @@
 /tmp
 /data
+data.json
 
 # Python
 __pycache__/

@@ -22,12 +22,12 @@ Initialize files:
 make init
 ```
 
-This creates `.env` from `.env.sample`, auto-generates `BACKUP_HTTP_TOKEN`, and creates missing JSON files in `data/`.
+This creates `.env` from `.env.sample`, auto-generates `BACKUP_HTTP_TOKEN`, and creates a missing `data.json` file.
 
 Edit `.env`:
 
 ```bash
-VPN_HOST_DATA_DIR=./data
+VPN_HOST_DATA_FILE=./data.json
 VPN_HOST_HTTP_BIND=127.0.0.1
 VPN_HOST_HTTP_PORT=8080
 VPN_SUBSCRIPTION_ROUTE=/sub/
@@ -56,7 +56,7 @@ EU_3X_UI_NODE_API_TOKEN=replace-me
 
 The public subscription URL is derived from those endpoint values. New clients receive an unguessable random `subId`, so their public URL looks like `https://your-domain.example/sub/<subId>`. To preserve an existing public URL, set the same domain, port, and route that clients already use.
 
-When upgrading data that used Telegram/user IDs as subscription paths, run `make migrate-subscription-ids` once before restarting the stack. The migration writes a new random `subId` for each client and stores the previous public identifier in `legacySubId`, so old links redirect to the new subscription URL.
+For a breaking data-format cutover, stop the app, place the prepared new `data.json` in the project root, deploy this version, restart the app, then verify `/health`, a known subscription URL, `/backup`, and Telegram `/backup`. Public URL compatibility is preserved by client `subId` and `legacySubId` fields in `data.json`.
 
 Telegram `/start` access is closed by default. Set `VPN_TELEGRAM_ALLOWED_CHAT_ID` to require membership in a Telegram chat/channel, set `VPN_TELEGRAM_ALLOWED_USER_IDS=*` to allow everyone, or set `VPN_TELEGRAM_ALLOWED_USER_IDS` to a comma-separated allowlist of Telegram user IDs.
 
@@ -64,7 +64,7 @@ Telegram reports are disabled by default. Set `REPORT_TELEGRAM_ENABLED=true` and
 
 3x-UI geofiles updates are disabled by default. Set `GEOFILES_UPDATE_ENABLED=true` and `GEOFILES_UPDATE_SCHEDULE` to update geofiles on every configured node on a schedule. The job calls `panel/api/server/updateGeofile` and also tries `panel/api/custom-geo/update-all`; nodes that do not have the custom geofiles endpoint are skipped for that part. All app cron schedules are evaluated in UTC by the app container.
 
-Monitoring alerts are disabled by default. Set `VPN_MONITORING_ALERTS_ENABLED=true` to poll configured nodes through the 3x-UI status API and send Telegram admin alerts for sustained 3x-UI unavailability, Xray down state, high CPU, and high RAM. Defaults are a 30 second poll interval, 60 second sustained failure duration, 90 percent CPU/RAM thresholds, and a 1 hour cooldown for repeat alerts with the same node and event category. To opt a node out while monitoring is globally enabled, add `"monitoring": false` to that node in `data/nodes.json`.
+Monitoring alerts are disabled by default. Set `VPN_MONITORING_ALERTS_ENABLED=true` to poll configured nodes through the 3x-UI status API and send Telegram admin alerts for sustained 3x-UI unavailability, Xray down state, high CPU, and high RAM. Defaults are a 30 second poll interval, 60 second sustained failure duration, 90 percent CPU/RAM thresholds, and a 1 hour cooldown for repeat alerts with the same node and event category. To opt a node out while monitoring is globally enabled, add `"monitoring": false` to that node in `data.json`.
 
 `VPN_SUBSCRIPTION_CERT_PATH` must point to a host directory containing:
 
@@ -77,15 +77,28 @@ The bundled nginx container mounts that directory read-only and terminates TLS. 
 
 If your JSON data uses `${{ env.VAR_NAME }}` templates, define those variables in `.env` too.
 
-3x-UI v3.0.0 or newer is required. Node integration uses only the 3x-UI API token from Settings -> Security -> API Token; username/password session login is not supported. Keep the token in `.env` and reference it from `data/nodes.json`:
+3x-UI v3.0.0 or newer is required. Node integration uses only the 3x-UI API token from Settings -> Security -> API Token; username/password session login is not supported. Keep the token in `.env` and reference it from `data.json`:
 
 ```json
 {
-	"id": 1,
-	"host": "node.example.test",
-	"port": 2053,
-	"basePath": "/panel/",
-	"apiToken": "${{ env.EU_3X_UI_NODE_API_TOKEN }}"
+  "nodes": [
+    {
+      "id": 1,
+      "host": "node.example.test",
+      "port": 2053,
+      "basePath": "/panel/",
+      "apiToken": "${{ env.EU_3X_UI_NODE_API_TOKEN }}",
+      "inbounds": [
+        {"tag": "eu-default", "label": "EU", "xuiInboundId": 1}
+      ]
+    }
+  ],
+  "externalInbounds": [],
+  "clients": [],
+  "defaultClientInboundTags": ["eu-default"],
+  "subscription": {
+    "profileTitle": "My VPN"
+  }
 }
 ```
 
@@ -99,21 +112,18 @@ sed -i "s|^BACKUP_SECRETS_SSH_KEY=.*|BACKUP_SECRETS_SSH_KEY=\"$(head -n 1 ~/.ssh
 
 The key is public. The encrypted `env.encrypted` file can be decrypted only with the matching private key.
 
-Restore data from backup, or edit files in `data/` manually:
+Restore data from backup, or edit `data.json` manually:
 
 ```bash
 make restore-data BACKUP=/path/to/data.tar.gz
 ```
 
-The archive should contain the JSON files at its root.
+The archive should contain `data.json` at its root.
 
-The data directory must contain:
+The project root must contain:
 
 ```text
-nodes.json
-clients.json
-inbounds.json
-subscription.json
+data.json
 ```
 
 Start the service:
@@ -141,7 +151,7 @@ curl -H "Authorization: Bearer $BACKUP_HTTP_TOKEN" \
 
 For migration from an externally managed reverse proxy, configure `VPN_SUBSCRIPTION_DOMAIN`, `VPN_SUBSCRIPTION_PORT`, and `VPN_SUBSCRIPTION_ROUTE` to match the old public subscription URL, then switch traffic to the bundled nginx service.
 
-The HTTP backup contains only `nodes.json`, `clients.json`, `inbounds.json`, and `subscription.json`. Keep Telegram tokens, 3x-UI API tokens, and other runtime secret values in `.env` rather than in the plain data archive.
+The HTTP backup contains only `data.json`. Keep Telegram tokens, 3x-UI API tokens, and other runtime secret values in `.env` and reference them from `data.json` with environment templates rather than writing raw secret values into the plain data archive.
 
 Create local backups from the shared backup flows:
 
@@ -150,7 +160,7 @@ make backup-data
 make backup-secrets
 ```
 
-`make backup-secrets` creates `backups/env.encrypted` only when `BACKUP_SECRETS_SSH_KEY` is set. The Telegram `/backup` command sends one `vpn-control-plane-backup.tar.gz` archive containing `data/`, `env.encrypted` when the key is configured, and 3x-UI node files named `<node_host>-<node_id>-x-ui.db` and `<node_host>-<node_id>-xray-config.json`.
+`make backup-secrets` creates `backups/env.encrypted` only when `BACKUP_SECRETS_SSH_KEY` is set. The Telegram `/backup` command sends one `vpn-control-plane-backup.tar.gz` archive containing `project root`, `env.encrypted` when the key is configured, and 3x-UI node files named `<node_host>-<node_id>-x-ui.db` and `<node_host>-<node_id>-xray-config.json`.
 
 Restore `.env` from `vpn-control-plane-backup.tar.gz` on a local machine that has the matching private key. On macOS with `age` installed:
 
@@ -164,9 +174,9 @@ The decrypted `env.encrypted` archive contains hidden file `.env`.
 ## Commands
 
 ```bash
-make init                         # create .env and missing data files
-make restore-data BACKUP=file.tar.gz  # restore data archive into data dir
-make backup-data                  # create backup archive from data dir
+make init                         # create .env and missing data.json
+make restore-data BACKUP=file.tar.gz  # restore data archive into data.json
+make backup-data                  # create backup archive from data.json
 make backup-secrets               # create encrypted .env backup when SSH key is configured
 make up                           # build and start app + nginx
 make logs                         # follow logs

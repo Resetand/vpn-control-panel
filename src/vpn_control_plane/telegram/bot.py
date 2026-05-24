@@ -23,7 +23,7 @@ from aiogram.types import (
 from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import (
-    JsonStateStore,
+    ControlPlaneStore,
     SubscriptionMetadata,
 )
 from vpn_control_plane.provisioning import ProvisioningError, ProvisioningResult, ProvisioningService
@@ -57,10 +57,10 @@ class TelegramBotServices:
     settings: Settings
     provisioning: ProvisioningService
     subscription: SubscriptionService
-    store: JsonStateStore
+    store: ControlPlaneStore
 
 
-def create_services(settings: Settings, store: JsonStateStore) -> TelegramBotServices:
+def create_services(settings: Settings, store: ControlPlaneStore) -> TelegramBotServices:
     return TelegramBotServices(
         settings=settings,
         provisioning=ProvisioningService(store, default_vless_flow=settings.default_vless_flow),
@@ -93,7 +93,7 @@ def create_bot(settings: Settings) -> Bot:
     return Bot(token=settings.telegram_bot_token.get_secret_value())
 
 
-async def run_telegram_bot(settings: Settings, store: JsonStateStore) -> None:
+async def run_telegram_bot(settings: Settings, store: ControlPlaneStore) -> None:
     bot = create_bot(settings)
     dispatcher = create_dispatcher(create_services(settings, store))
     try:
@@ -267,7 +267,7 @@ async def handle_backup(message: Message, services: TelegramBotServices, bot: Bo
 
     try:
         backup = await build_control_plane_backup(
-            services.store.data_dir,
+            services.store.data_file,
             services.store.load_nodes(),
             env_file=services.settings.backup_secrets_env_file,
             ssh_public_key=services.settings.backup_secrets_ssh_key,

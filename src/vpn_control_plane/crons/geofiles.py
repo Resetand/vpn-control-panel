@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import JsonStateStore, NodeRecord
+from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.xui import XuiNodeClient
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class GeofileUpdateClient(Protocol):
 
 
 async def update_geofiles_on_all_nodes(
-    store: JsonStateStore,
+    store: ControlPlaneStore,
     *,
     client_factory: Callable[[NodeRecord], GeofileUpdateClient] = XuiNodeClient,
 ) -> None:
@@ -37,7 +37,7 @@ async def update_geofiles_on_all_nodes(
             await client.close()
 
 
-async def update_geofiles(settings: Settings, store: JsonStateStore) -> None:
+async def update_geofiles(settings: Settings, store: ControlPlaneStore) -> None:
     await update_geofiles_on_all_nodes(store)
 
 

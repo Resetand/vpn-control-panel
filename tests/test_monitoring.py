@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import vpn_control_plane.app as app_module
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import JsonStateStore, NodeRecord
+from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.monitoring import ActiveCondition, MonitoringAlertState, MonitoringService
 from vpn_control_plane.xui import XuiMemoryStatus, XuiNodeStatus, XuiXrayStatus
 
@@ -33,17 +33,23 @@ def node_payload(node_id: int, *, monitoring: bool | None = None) -> dict[str, o
     return payload
 
 
-def prepare_data_dir(tmp_path: Path, *, nodes: list[dict[str, object]] | None = None) -> JsonStateStore:
-    write_json(tmp_path / "nodes.json", nodes or [node_payload(1)])
-    write_json(tmp_path / "clients.json", [])
-    write_json(tmp_path / "inbounds.json", [])
-    write_json(tmp_path / "subscription.json", {})
-    return JsonStateStore(tmp_path)
+def prepare_data_file(tmp_path: Path, *, nodes: list[dict[str, object]] | None = None) -> ControlPlaneStore:
+    write_json(
+        tmp_path / "data.json",
+        {
+            "nodes": nodes or [node_payload(1)],
+            "externalInbounds": [],
+            "clients": [],
+            "defaultClientInboundTags": [],
+            "subscription": {},
+        },
+    )
+    return ControlPlaneStore(tmp_path / "data.json")
 
 
 def settings(tmp_path: Path, **overrides: object) -> Settings:
     values: dict[str, object] = {
-        "VPN_DATA_DIR": str(tmp_path),
+        "VPN_DATA_FILE": str(tmp_path / "data.json"),
         "VPN_TELEGRAM_BOT_TOKEN": "token",
         "VPN_TELEGRAM_ADMIN_IDS": "1",
         "VPN_MONITORING_ALERTS_ENABLED": "true",
@@ -188,7 +194,7 @@ def test_monitoring_state_resets_condition_that_clears_before_duration() -> None
 
 @pytest.mark.asyncio
 async def test_monitoring_poll_skips_nodes_with_monitoring_disabled(tmp_path: Path) -> None:
-    store = prepare_data_dir(tmp_path, nodes=[node_payload(1), node_payload(2, monitoring=False)])
+    store = prepare_data_file(tmp_path, nodes=[node_payload(1), node_payload(2, monitoring=False)])
     polled_node_ids: list[int] = []
     clients: list[FakeStatusClient] = []
 
@@ -208,7 +214,7 @@ async def test_monitoring_poll_skips_nodes_with_monitoring_disabled(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_monitoring_poll_alerts_for_sustained_status_failure(tmp_path: Path) -> None:
-    store = prepare_data_dir(tmp_path)
+    store = prepare_data_file(tmp_path)
     notifier = FakeNotifier()
     now_values = iter(
         [
@@ -240,7 +246,7 @@ async def test_monitoring_poll_alerts_for_sustained_status_failure(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_monitoring_poll_alerts_for_xray_cpu_and_ram(tmp_path: Path) -> None:
-    store = prepare_data_dir(tmp_path)
+    store = prepare_data_file(tmp_path)
     notifier = FakeNotifier()
     now_values = iter(
         [
@@ -282,10 +288,10 @@ async def test_monitoring_poll_alerts_for_xray_cpu_and_ram(tmp_path: Path) -> No
 
 
 def test_app_does_not_start_monitoring_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    prepare_data_dir(tmp_path)
+    prepare_data_file(tmp_path)
     called = False
 
-    async def fake_run_monitoring_alerts(_settings: Settings, _store: JsonStateStore) -> None:
+    async def fake_run_monitoring_alerts(_settings: Settings, _store: ControlPlaneStore) -> None:
         nonlocal called
         called = True
 
@@ -299,10 +305,10 @@ def test_app_does_not_start_monitoring_when_disabled(tmp_path: Path, monkeypatch
 
 
 def test_app_starts_monitoring_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    prepare_data_dir(tmp_path)
+    prepare_data_file(tmp_path)
     started = threading.Event()
 
-    async def fake_run_monitoring_alerts(_settings: Settings, _store: JsonStateStore) -> None:
+    async def fake_run_monitoring_alerts(_settings: Settings, _store: ControlPlaneStore) -> None:
         started.set()
         await asyncio.Event().wait()
 

@@ -11,14 +11,14 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from vpn_control_plane.data import JsonStateStore
+from vpn_control_plane.data import ControlPlaneStore
 
 if TYPE_CHECKING:
     from vpn_control_plane.config import Settings
 
 logger = logging.getLogger(__name__)
 
-CronHandler = Callable[["Settings", JsonStateStore], Awaitable[None]]
+CronHandler = Callable[["Settings", ControlPlaneStore], Awaitable[None]]
 CRON_FIELD_RANGES = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
 
 
@@ -53,7 +53,7 @@ def wire_cron_jobs(app: App, settings: Settings) -> None:
 async def run_registered_cron_jobs(
     app: App,
     settings: Settings,
-    store: JsonStateStore,
+    store: ControlPlaneStore,
 ) -> AsyncIterator[None]:
     tasks = [_start_cron_job(job, settings, store) for job in app.cron_jobs]
     try:
@@ -66,14 +66,14 @@ async def run_registered_cron_jobs(
                 await task
 
 
-def _start_cron_job(job: CronJob, settings: Settings, store: JsonStateStore) -> tuple[str, asyncio.Task[None]]:
+def _start_cron_job(job: CronJob, settings: Settings, store: ControlPlaneStore) -> tuple[str, asyncio.Task[None]]:
     logger.info("Starting %s cron job", job.name)
     task = asyncio.create_task(_run_cron_loop(job, settings, store))
     task.add_done_callback(lambda completed_task: _log_cron_task_failure(job.name, completed_task))
     return job.name, task
 
 
-async def _run_cron_loop(job: CronJob, settings: Settings, store: JsonStateStore) -> None:
+async def _run_cron_loop(job: CronJob, settings: Settings, store: ControlPlaneStore) -> None:
     while True:
         now = datetime.now(UTC)
         next_time = next_cron_time(job.schedule, now)

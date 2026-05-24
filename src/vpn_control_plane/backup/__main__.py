@@ -12,7 +12,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     data_parser = subparsers.add_parser("data", help="Create a control-plane JSON data backup.")
-    data_parser.add_argument("--data-dir", type=Path, required=True)
+    data_parser.add_argument("--data-file", type=Path, required=True)
     data_parser.add_argument("--output", type=Path, required=True)
 
     secrets_parser = subparsers.add_parser("secrets", help="Create an encrypted .env secrets backup when configured.")
@@ -21,7 +21,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "data":
-        output_path = write_data_backup(args.data_dir, args.output)
+        output_path = write_data_backup(args.data_file, args.output)
         print(output_path)
         return
 

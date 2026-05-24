@@ -9,7 +9,7 @@ The runtime is a small Compose stack: one Python service hosts the HTTP subscrip
 - aiogram 3 for Telegram polling or future webhook handling.
 - httpx for 3x-UI API calls and node subscription fetching.
 - Pydantic v2 and pydantic-settings for environment settings and JSON state validation.
-- JSON files in a mounted data directory for control-plane state.
+- A mounted root-level `data.json` file for control-plane state.
 - nginx 1.27 Alpine for TLS termination and public subscription reverse proxying.
 - pytest and pytest-asyncio for behavior-focused unit tests.
 - Ruff and mypy for linting, formatting, and static checks.

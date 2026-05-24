@@ -14,16 +14,16 @@ from fastapi import Response
 
 from vpn_control_plane.data import (
     ClientRecord,
-    ExternalInboundRecord,
-    JsonStateStore,
+    ControlPlaneStore,
+    ExternalCatalogInbound,
+    NodeCatalogInbound,
     NodeInboundRecord,
-    NodeInboundTagRecord,
     NodeRecord,
     SubscriptionMetadata,
+    build_inbound_catalog,
+    effective_inbound_tags,
 )
 from vpn_control_plane.xui import XuiInbound, XuiNodeClient, build_xui_share_links
-
-NodeSubscriptionInbound = NodeInboundRecord | NodeInboundTagRecord
 
 
 class SubscriptionError(RuntimeError):
@@ -77,7 +77,7 @@ def build_public_subscription_url(public_base_url: str, sub_id: str) -> str:
 class SubscriptionService:
     def __init__(
         self,
-        store: JsonStateStore,
+        store: ControlPlaneStore,
         *,
         public_base_url: str,
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
@@ -96,7 +96,7 @@ class SubscriptionService:
         if client is None:
             raise UnknownSubscriptionClientError("unknown subscription client")
 
-        nodes_by_id = {node.id: node for node in state.nodes}
+        catalog = build_inbound_catalog(state)
         node_clients: dict[int, XuiNodeClient] = {}
         node_inbounds_by_id: dict[int, dict[int, XuiInbound]] = {}
         node_inbound_load_failures: set[int] = set()
@@ -105,18 +105,17 @@ class SubscriptionService:
         traffic = SubscriptionTraffic()
 
         try:
-            for inbound in state.inbounds:
-                if inbound.allowed_client_ids and client.id not in inbound.allowed_client_ids:
-                    continue
-                if isinstance(inbound, ExternalInboundRecord):
-                    if inbound.uri.strip():
-                        links.append(_ensure_fragment_label(inbound.uri.strip(), inbound.label))
+            for tag in effective_inbound_tags(state, client):
+                catalog_inbound = catalog[tag]
+                if isinstance(catalog_inbound, ExternalCatalogInbound):
+                    external_inbound = catalog_inbound.inbound
+                    if external_inbound.uri.strip():
+                        links.append(_ensure_fragment_label(external_inbound.uri.strip(), external_inbound.label))
                     continue
 
-                node = nodes_by_id.get(inbound.node_id)
-                if node is None:
-                    node_errors.append(f"node {inbound.node_id} is not configured")
-                    continue
+                assert isinstance(catalog_inbound, NodeCatalogInbound)
+                node = catalog_inbound.node
+                node_inbound = catalog_inbound.inbound
                 node_client = node_clients.get(node.id)
                 if node_client is None:
                     node_client = self._node_client_factory(node)
@@ -134,9 +133,9 @@ class SubscriptionService:
                     node_inbounds_by_id[node.id] = listed_inbounds
                 links.extend(
                     await self._build_node_inbound_links(
-                        listed_inbounds.get(inbound.inbound_id),
+                        listed_inbounds.get(node_inbound.xui_inbound_id),
                         node,
-                        inbound,
+                        node_inbound,
                         client,
                         node_errors,
                         traffic,
@@ -161,24 +160,23 @@ class SubscriptionService:
         self,
         xui_inbound: XuiInbound | None,
         node: NodeRecord,
-        inbound: NodeSubscriptionInbound,
+        inbound: NodeInboundRecord,
         client: ClientRecord,
         node_errors: list[str],
         traffic: SubscriptionTraffic,
     ) -> list[str]:
         try:
             if xui_inbound is None:
-                raise SubscriptionError(f"inbound {inbound.inbound_id} was not found")
+                raise SubscriptionError(f"inbound {inbound.xui_inbound_id} was not found")
             _add_client_traffic(traffic, xui_inbound, inbound, client)
             if not _xui_inbound_is_enabled(xui_inbound.raw.get("enable", True)):
                 return []
-            client_email = _inbound_client_tag(inbound)
             links = build_xui_share_links(
                 xui_inbound,
                 fallback_address=node.host,
                 sub_id=client.effective_sub_id,
-                client_email=client_email,
-                fallback_email=None if client_email else f"{inbound.inbound_id}_{client.id}",
+                client_email=None,
+                fallback_email=f"{inbound.xui_inbound_id}_{client.id}",
                 remark=inbound.label,
             )
             if not links:
@@ -398,7 +396,7 @@ def _parse_subscription_userinfo(value: str | None) -> dict[str, str]:
 def _add_client_traffic(
     traffic: SubscriptionTraffic,
     xui_inbound: object,
-    inbound: NodeSubscriptionInbound,
+    inbound: NodeInboundRecord,
     client: ClientRecord,
 ) -> None:
     raw = getattr(xui_inbound, "raw", {})
@@ -406,13 +404,12 @@ def _add_client_traffic(
     if not isinstance(stats, list):
         return
 
-    client_email = _inbound_client_tag(inbound)
-    fallback_email = None if client_email else f"{inbound.inbound_id}_{client.id}"
+    fallback_email = f"{inbound.xui_inbound_id}_{client.id}"
     for stat in stats:
         if _traffic_stat_matches_client(
             stat,
             sub_id=client.effective_sub_id,
-            client_email=client_email,
+            client_email=None,
             fallback_email=fallback_email,
         ):
             traffic.add(stat)
@@ -430,12 +427,6 @@ def _traffic_stat_matches_client(
     if client_email:
         return _text(stat.get("email")) == client_email
     return _text(stat.get("subId")) == sub_id or bool(fallback_email and _text(stat.get("email")) == fallback_email)
-
-
-def _inbound_client_tag(inbound: NodeSubscriptionInbound) -> str | None:
-    if isinstance(inbound, NodeInboundTagRecord):
-        return inbound.inbound_client_tag
-    return None
 
 
 def _text(value: object) -> str:

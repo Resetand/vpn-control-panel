@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from vpn_control_plane.data import JsonStateStore, NodeRecord
+from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.provisioning import ProvisioningService, legacy_client_email, telegram_client_id
 from vpn_control_plane.xui import XuiAddClientResult, XuiInbound
 
@@ -25,16 +25,45 @@ def prepare_store(
     *,
     clients: list[JsonObject] | None = None,
     inbounds: list[JsonObject] | None = None,
-) -> JsonStateStore:
-    write_json(
-        tmp_path / "nodes.json",
-        [
+) -> ControlPlaneStore:
+    state = build_state(clients=clients or [], inbounds=inbounds)
+    write_json(tmp_path / "data.json", state)
+    return ControlPlaneStore(tmp_path / "data.json")
+
+
+def build_state(
+    *,
+    clients: list[JsonObject],
+    inbounds: list[JsonObject] | None = None,
+) -> JsonObject:
+    raw_inbounds = inbounds or [
+        {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+        {"label": "External", "uri": "vless://external#External"},
+        {"label": "Two", "nodeId": 2, "xuiInboundId": 2},
+    ]
+    node_inbounds_by_id: dict[int, list[JsonObject]] = {1: [], 2: []}
+    external_inbounds: list[JsonObject] = []
+    default_tags: list[str] = []
+    for index, item in enumerate(raw_inbounds):
+        if "uri" in item:
+            tag = str(item.get("tag") or f"external-{index}")
+            external_inbounds.append({"tag": tag, "label": item["label"], "uri": item["uri"]})
+        else:
+            tag = str(item.get("tag") or f"node-{item['nodeId']}-{item['xuiInboundId']}-{index}")
+            node_inbounds_by_id[int(item["nodeId"])].append(
+                {"tag": tag, "label": item["label"], "xuiInboundId": item["xuiInboundId"]}
+            )
+        default_tags.append(tag)
+
+    return {
+        "nodes": [
             {
                 "id": 1,
                 "host": "node-1.example.test",
                 "port": 443,
                 "basePath": "/panel/",
                 "apiToken": "token-1",
+                "inbounds": node_inbounds_by_id[1],
             },
             {
                 "id": 2,
@@ -42,21 +71,14 @@ def prepare_store(
                 "port": 443,
                 "basePath": "/panel/",
                 "apiToken": "token-2",
+                "inbounds": node_inbounds_by_id[2],
             },
         ],
-    )
-    write_json(tmp_path / "clients.json", clients or [])
-    write_json(
-        tmp_path / "inbounds.json",
-        inbounds
-        or [
-            {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1},
-            {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
-            {"type": "node-inbound", "label": "Two", "nodeId": 2, "inboundId": 2},
-        ],
-    )
-    write_json(tmp_path / "subscription.json", {})
-    return JsonStateStore(tmp_path)
+        "externalInbounds": external_inbounds,
+        "clients": clients,
+        "defaultClientInboundTags": default_tags,
+        "subscription": {},
+    }
 
 
 def inbound(inbound_id: int, protocol: str = "vless", clients: list[JsonObject] | None = None) -> XuiInbound:
@@ -91,7 +113,7 @@ class FakeXuiClient:
 
 
 def service_with_fakes(
-    store: JsonStateStore,
+    store: ControlPlaneStore,
     inbounds_by_node: dict[int, list[XuiInbound]],
 ) -> tuple[ProvisioningService, dict[int, FakeXuiClient]]:
     clients: dict[int, FakeXuiClient] = {}
@@ -134,8 +156,8 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
     assert clients[1].added[0][1]["tgId"] == 123
     assert clients[1].added[0][1]["flow"] == "xtls-rprx-vision"
     assert clients[2].added[0][1]["email"] == "2_123"
-    saved = json.loads((tmp_path / "clients.json").read_text(encoding="utf-8"))
-    assert saved == [
+    saved = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
+    assert saved["clients"] == [
         {
             "id": "123",
             "comment": "Kirill (@resetand)",
@@ -162,8 +184,8 @@ async def test_returning_client_does_not_create_or_overwrite_existing_key_materi
     assert clients[2].added == []
     assert existing_one["id"] == "keep-uuid"
     assert existing_two["password"] == "keep-password"
-    saved = json.loads((tmp_path / "clients.json").read_text(encoding="utf-8"))
-    assert saved == [
+    saved = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
+    assert saved["clients"] == [
         {
             "id": "123",
             "comment": "Existing",
@@ -198,8 +220,8 @@ async def test_external_inbounds_are_skipped_during_provisioning(tmp_path: Path)
     store = prepare_store(
         tmp_path,
         inbounds=[
-            {"type": "external-inbound", "label": "External", "uri": "vless://external#External"},
-            {"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1},
+            {"label": "External", "uri": "vless://external#External"},
+            {"label": "One", "nodeId": 1, "xuiInboundId": 1},
         ],
     )
     service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
@@ -211,46 +233,23 @@ async def test_external_inbounds_are_skipped_during_provisioning(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_node_inbound_tag_entries_are_skipped_during_provisioning(tmp_path: Path) -> None:
+async def test_existing_client_explicit_inbound_tags_define_provisioning_scope(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
+        clients=[{"id": "123", "comment": "Existing", "inboundTags": ["personal"]}],
         inbounds=[
-            {
-                "type": "node-inbound-tag",
-                "label": "Shared",
-                "nodeId": 1,
-                "inboundId": 1,
-                "inboundClientTag": "shared-client",
-            },
-            {"type": "node-inbound", "label": "Personal", "nodeId": 2, "inboundId": 2},
+            {"tag": "default", "label": "Default", "nodeId": 1, "xuiInboundId": 1},
+            {"tag": "personal", "label": "Personal", "nodeId": 2, "xuiInboundId": 2},
         ],
     )
     service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
 
-    result = await service.ensure_client("123", comment="Skip shared")
+    result = await service.ensure_client("123", comment="Keep override")
 
     assert result.created == 1
     assert 1 not in clients
-    assert len(clients[2].added) == 1
     assert clients[2].added[0][1]["email"] == "2_123"
-
-
-@pytest.mark.asyncio
-async def test_duplicate_node_inbound_entries_are_provisioned_once(tmp_path: Path) -> None:
-    store = prepare_store(
-        tmp_path,
-        inbounds=[
-            {"type": "node-inbound", "label": "Primary", "nodeId": 1, "inboundId": 1},
-            {"type": "node-inbound", "label": "Alias", "nodeId": 1, "inboundId": 1},
-        ],
-    )
-    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")]})
-
-    result = await service.ensure_client("123", comment="Dedup")
-
-    assert result.created == 1
-    assert len(clients[1].added) == 1
-    assert clients[1].added[0][1]["email"] == "1_123"
+    assert result.client.inbound_tags == ["personal"]
 
 
 @pytest.mark.asyncio
@@ -296,7 +295,7 @@ async def test_vless_flow_is_configurable_and_applies_only_to_tcp_vless(tmp_path
 
 @pytest.mark.asyncio
 async def test_concurrent_provisioning_for_same_client_is_serialized(tmp_path: Path) -> None:
-    store = prepare_store(tmp_path, inbounds=[{"type": "node-inbound", "label": "One", "nodeId": 1, "inboundId": 1}])
+    store = prepare_store(tmp_path, inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}])
     service, clients = service_with_fakes(store, {1: [inbound(1, "vless")]})
 
     await asyncio.gather(

@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 
 from vpn_control_plane.backup import DATA_BACKUP_FILE_NAME, build_data_backup
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import JsonStateStore
+from vpn_control_plane.data import ControlPlaneStore
 from vpn_control_plane.subscription import (
     SubscriptionService,
     UnknownSubscriptionClientError,
@@ -15,7 +15,7 @@ from vpn_control_plane.subscription import (
 )
 
 
-def create_router(settings: Settings, store: JsonStateStore) -> APIRouter:
+def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
     router = APIRouter()
     subscription_service = SubscriptionService(
         store,
@@ -30,7 +30,7 @@ def create_router(settings: Settings, store: JsonStateStore) -> APIRouter:
     async def backup(authorization: str | None = Header(default=None)) -> Response:
         _authorize_backup(settings, authorization)
         return Response(
-            content=build_data_backup(store.data_dir),
+            content=build_data_backup(store.data_file),
             media_type="application/gzip",
             headers={"content-disposition": f'attachment; filename="{DATA_BACKUP_FILE_NAME}"'},
         )

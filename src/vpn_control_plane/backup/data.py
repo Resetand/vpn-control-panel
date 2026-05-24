@@ -5,20 +5,18 @@ from io import BytesIO
 from pathlib import Path
 
 DATA_BACKUP_FILE_NAME = "vpn-control-plane-data.tar.gz"
-BACKUP_DATA_FILES = ("nodes.json", "clients.json", "inbounds.json", "subscription.json")
+BACKUP_DATA_FILE_NAME = "data.json"
 
 
-def build_data_backup(data_dir: Path) -> bytes:
+def build_data_backup(data_file: Path) -> bytes:
     buffer = BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        for file_name in BACKUP_DATA_FILES:
-            file_path = data_dir / file_name
-            if file_path.is_file():
-                archive.add(file_path, arcname=file_name)
+        if data_file.is_file():
+            archive.add(data_file, arcname=BACKUP_DATA_FILE_NAME)
     return buffer.getvalue()
 
 
-def write_data_backup(data_dir: Path, output_path: Path) -> Path:
+def write_data_backup(data_file: Path, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(build_data_backup(data_dir))
+    output_path.write_bytes(build_data_backup(data_file))
     return output_path

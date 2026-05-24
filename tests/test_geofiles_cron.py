@@ -6,14 +6,22 @@ from pathlib import Path
 import pytest
 
 from vpn_control_plane.crons.geofiles import update_geofiles_on_all_nodes
-from vpn_control_plane.data import JsonStateStore, NodeRecord
+from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 
 
 def write_state(tmp_path: Path, nodes: list[dict[str, object]]) -> None:
-    (tmp_path / "nodes.json").write_text(json.dumps(nodes), encoding="utf-8")
-    (tmp_path / "clients.json").write_text("[]", encoding="utf-8")
-    (tmp_path / "inbounds.json").write_text("[]", encoding="utf-8")
-    (tmp_path / "subscription.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "data.json").write_text(
+        json.dumps(
+            {
+                "nodes": nodes,
+                "externalInbounds": [],
+                "clients": [],
+                "defaultClientInboundTags": [],
+                "subscription": {},
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.asyncio
@@ -40,7 +48,7 @@ async def test_update_geofiles_on_all_nodes_continues_after_node_failure(tmp_pat
         async def close(self) -> None:
             closed.append(self.node.id)
 
-    await update_geofiles_on_all_nodes(JsonStateStore(tmp_path), client_factory=FakeClient)
+    await update_geofiles_on_all_nodes(ControlPlaneStore(tmp_path / "data.json"), client_factory=FakeClient)
 
     assert updated == [1, 2]
     assert closed == [1, 2]

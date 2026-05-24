@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import JsonStateStore, NodeRecord
+from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.monitoring.detectors import (
     ActiveCondition,
     detect_status_conditions,
@@ -37,7 +37,7 @@ class MonitoringService:
     def __init__(
         self,
         settings: Settings,
-        store: JsonStateStore,
+        store: ControlPlaneStore,
         *,
         notifier: AlertNotifier | None = None,
         client_factory: Callable[[NodeRecord], StatusClient] | None = None,
@@ -126,7 +126,7 @@ def format_alert_message(candidate: AlertCandidate, *, duration_seconds: int) ->
     return "\n".join(lines)
 
 
-async def run_monitoring_alerts(settings: Settings, store: JsonStateStore) -> None:
+async def run_monitoring_alerts(settings: Settings, store: ControlPlaneStore) -> None:
     service = MonitoringService(settings, store)
     try:
         await service.run_forever()

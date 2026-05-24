@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -7,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import JsonStateStore
+from vpn_control_plane.data import ControlPlaneStore
 from vpn_control_plane.reports.schedule import CronScheduleError, next_cron_time, validate_cron_expression
 from vpn_control_plane.reports.telegram import REPORT_CAPTION, send_telegram_backup_report
 
@@ -31,7 +32,7 @@ async def test_send_telegram_backup_report_sends_archive_to_every_admin(
 ) -> None:
     settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "2,1",
         }
@@ -46,8 +47,20 @@ async def test_send_telegram_backup_report_sends_archive_to_every_admin(
             sent.append(kwargs)
 
     monkeypatch.setattr("vpn_control_plane.reports.telegram.build_control_plane_backup", fake_build_backup)
+    (tmp_path / "data.json").write_text(
+        json.dumps(
+            {
+                "nodes": [],
+                "externalInbounds": [],
+                "clients": [],
+                "defaultClientInboundTags": [],
+                "subscription": {},
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    await send_telegram_backup_report(settings, JsonStateStore(tmp_path), cast(Any, FakeBot()))
+    await send_telegram_backup_report(settings, ControlPlaneStore(tmp_path / "data.json"), cast(Any, FakeBot()))
 
     assert [item["chat_id"] for item in sent] == [1, 2]
     assert [item["document"].filename for item in sent] == ["vpn-control-plane-backup.tar.gz"] * 2

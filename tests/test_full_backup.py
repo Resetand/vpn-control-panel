@@ -48,17 +48,23 @@ async def test_build_control_plane_backup_contains_data_encrypted_env_and_node_f
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    write_json(tmp_path / "nodes.json", [{"id": 1}])
-    write_json(tmp_path / "clients.json", [])
-    write_json(tmp_path / "inbounds.json", [])
-    write_json(tmp_path / "subscription.json", {})
+    write_json(
+        tmp_path / "data.json",
+        {
+            "nodes": [],
+            "externalInbounds": [],
+            "clients": [],
+            "defaultClientInboundTags": [],
+            "subscription": {},
+        },
+    )
     write_json(tmp_path / "runtime-cache.json", {"ignored": True})
     env_file = tmp_path / ".env"
     env_file.write_text("VPN_TELEGRAM_BOT_TOKEN=secret\n", encoding="utf-8")
     monkeypatch.setattr(backup_secrets, "encrypt_for_ssh_public_key", lambda _plaintext, _key: b"encrypted-env")
 
     backup = await build_control_plane_backup(
-        tmp_path,
+        tmp_path / "data.json",
         [node(1, "eu.example.test")],
         env_file=env_file,
         ssh_public_key="ssh-ed25519 AAAATEST backup",
@@ -68,10 +74,7 @@ async def test_build_control_plane_backup_contains_data_encrypted_env_and_node_f
     with tarfile.open(fileobj=BytesIO(backup), mode="r:gz") as archive:
         names = sorted(archive.getnames())
         assert names == [
-            "data/clients.json",
-            "data/inbounds.json",
-            "data/nodes.json",
-            "data/subscription.json",
+            "data.json",
             "env.encrypted",
             "eu.example.test-1-x-ui.db",
             "eu.example.test-1-xray-config.json",

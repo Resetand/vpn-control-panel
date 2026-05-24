@@ -1,24 +1,30 @@
 from vpn_control_plane.data.models import (
+    CatalogInbound,
     ClientRecord,
     ControlPlaneState,
+    ExternalCatalogInbound,
     ExternalInboundRecord,
-    InboundRecord,
+    NodeCatalogInbound,
     NodeInboundRecord,
-    NodeInboundTagRecord,
     NodeRecord,
     SubscriptionMetadata,
+    build_inbound_catalog,
+    effective_inbound_tags,
 )
-from vpn_control_plane.data.store import JsonStateStore, StateValidationError
+from vpn_control_plane.data.store import ControlPlaneStore, StateValidationError
 
 __all__ = [
+    "CatalogInbound",
     "ClientRecord",
     "ControlPlaneState",
+    "ControlPlaneStore",
+    "ExternalCatalogInbound",
     "ExternalInboundRecord",
-    "InboundRecord",
-    "JsonStateStore",
+    "NodeCatalogInbound",
     "NodeInboundRecord",
-    "NodeInboundTagRecord",
     "NodeRecord",
     "StateValidationError",
     "SubscriptionMetadata",
+    "build_inbound_catalog",
+    "effective_inbound_tags",
 ]

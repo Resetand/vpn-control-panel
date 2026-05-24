@@ -10,7 +10,7 @@ import uvicorn
 
 from vpn_control_plane.config import Settings
 from vpn_control_plane.crons.base import App, run_registered_cron_jobs, wire_cron_jobs
-from vpn_control_plane.data.store import JsonStateStore
+from vpn_control_plane.data.store import ControlPlaneStore
 from vpn_control_plane.http.routes import create_router
 from vpn_control_plane.monitoring import run_monitoring_alerts
 from vpn_control_plane.telegram.bot import run_telegram_bot
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def create_app(settings: Settings | None = None, *, start_telegram: bool = True) -> App:
     settings = settings or Settings()  # type: ignore[call-arg]
-    store = JsonStateStore(settings.data_dir)
+    store = ControlPlaneStore(settings.data_file)
     store.verify_ready()
     store.load_state()
     logger.info("Application configuration and state loaded")

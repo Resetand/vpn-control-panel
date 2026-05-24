@@ -4,11 +4,19 @@ import asyncio
 import base64
 import secrets
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from vpn_control_plane.data import ClientRecord, JsonStateStore, NodeInboundRecord, NodeRecord
+from vpn_control_plane.data import (
+    ClientRecord,
+    ControlPlaneStore,
+    NodeCatalogInbound,
+    NodeInboundRecord,
+    NodeRecord,
+    build_inbound_catalog,
+    effective_inbound_tags,
+)
 from vpn_control_plane.xui import XuiInbound, XuiNodeClient, find_client_by_email
 
 
@@ -50,7 +58,7 @@ def generate_subscription_id() -> str:
 class ProvisioningService:
     def __init__(
         self,
-        store: JsonStateStore,
+        store: ControlPlaneStore,
         *,
         default_vless_flow: str = "xtls-rprx-vision",
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
@@ -115,38 +123,40 @@ class ProvisioningService:
     ) -> ProvisioningResult:
         state = self._store.load_state()
         existing_record = next((client for client in state.clients if client.id == client_id), None)
-        node_inbounds = provisioning_node_inbounds(state.inbounds)
-        if not node_inbounds:
-            raise ProvisioningError("no node-inbound entries are configured")
-
-        nodes_by_id = {node.id: node for node in state.nodes}
-        required_node_ids = {inbound.node_id for inbound in node_inbounds}
-        clients_by_node = {
-            node.id: self._node_client_factory(node) for node in state.nodes if node.id in required_node_ids
-        }
+        candidate_record = existing_record or ClientRecord(id=client_id, comment=comment)
+        catalog = build_inbound_catalog(state)
+        node_inbounds: list[NodeCatalogInbound] = []
+        for tag in effective_inbound_tags(state, candidate_record):
+            catalog_inbound = catalog[tag]
+            if isinstance(catalog_inbound, NodeCatalogInbound):
+                node_inbounds.append(catalog_inbound)
+        clients_by_node = {item.node.id: self._node_client_factory(item.node) for item in node_inbounds}
         inbound_cache: dict[tuple[int, int], XuiInbound] = {}
         existing_by_inbound: dict[tuple[int, int], JsonObject] = {}
         stored_sub_id = existing_record.sub_id if existing_record else None
 
         try:
-            for meta_inbound in node_inbounds:
-                if meta_inbound.node_id not in nodes_by_id:
-                    raise ProvisioningError(
-                        f"node {meta_inbound.node_id} is referenced by an inbound but is not configured"
-                    )
-                xui_client = clients_by_node[meta_inbound.node_id]
-                inbound = await self._load_inbound(xui_client, meta_inbound)
-                inbound_cache[(meta_inbound.node_id, meta_inbound.inbound_id)] = inbound
-                existing_client = find_client_by_email(inbound, legacy_client_email(meta_inbound.inbound_id, client_id))
+            for catalog_inbound in node_inbounds:
+                node = catalog_inbound.node
+                meta_inbound = catalog_inbound.inbound
+                xui_client = clients_by_node[node.id]
+                inbound = await self._load_inbound(xui_client, node, meta_inbound)
+                inbound_cache[(node.id, meta_inbound.xui_inbound_id)] = inbound
+                existing_client = find_client_by_email(
+                    inbound,
+                    legacy_client_email(meta_inbound.xui_inbound_id, client_id),
+                )
                 if existing_client is not None:
-                    existing_by_inbound[(meta_inbound.node_id, meta_inbound.inbound_id)] = existing_client
+                    existing_by_inbound[(node.id, meta_inbound.xui_inbound_id)] = existing_client
 
             final_sub_id = stored_sub_id or self._subscription_id_factory()
             created = 0
             reused = len(existing_by_inbound)
 
-            for meta_inbound in node_inbounds:
-                inbound_key = (meta_inbound.node_id, meta_inbound.inbound_id)
+            for catalog_inbound in node_inbounds:
+                node = catalog_inbound.node
+                meta_inbound = catalog_inbound.inbound
+                inbound_key = (node.id, meta_inbound.xui_inbound_id)
                 if inbound_key in existing_by_inbound:
                     continue
                 inbound = inbound_cache[inbound_key]
@@ -157,7 +167,7 @@ class ProvisioningService:
                     comment=comment,
                     telegram_id=telegram_id,
                 )
-                add_result = await clients_by_node[meta_inbound.node_id].add_client(meta_inbound.inbound_id, payload)
+                add_result = await clients_by_node[node.id].add_client(meta_inbound.xui_inbound_id, payload)
                 if add_result.created:
                     created += 1
                 else:
@@ -177,11 +187,16 @@ class ProvisioningService:
                 if close is not None:
                     await close()
 
-    async def _load_inbound(self, xui_client: XuiNodeClient, meta_inbound: NodeInboundRecord) -> XuiInbound:
+    async def _load_inbound(
+        self,
+        xui_client: XuiNodeClient,
+        node: NodeRecord,
+        meta_inbound: NodeInboundRecord,
+    ) -> XuiInbound:
         inbounds = await xui_client.list_inbounds()
-        inbound = next((candidate for candidate in inbounds if candidate.id == meta_inbound.inbound_id), None)
+        inbound = next((candidate for candidate in inbounds if candidate.id == meta_inbound.xui_inbound_id), None)
         if inbound is None:
-            raise ProvisioningError(f"inbound {meta_inbound.inbound_id} was not found on node {meta_inbound.node_id}")
+            raise ProvisioningError(f"inbound {meta_inbound.xui_inbound_id} was not found on node {node.id}")
         return inbound
 
     def build_client_payload(
@@ -244,25 +259,12 @@ class ProvisioningService:
             comment=existing_record.comment if existing_record else comment,
             subId=sub_id,
             legacySubId=_legacy_sub_id(existing_record),
+            inboundTags=existing_record.inbound_tags if existing_record else None,
         )
         next_clients = [client for client in clients if client.id != client_id]
         next_clients.append(record)
         self._store.save_clients(next_clients)
         return record
-
-
-def provisioning_node_inbounds(inbounds: Sequence[object]) -> list[NodeInboundRecord]:
-    selected: list[NodeInboundRecord] = []
-    seen: set[tuple[int, int]] = set()
-    for inbound in inbounds:
-        if not isinstance(inbound, NodeInboundRecord):
-            continue
-        key = (inbound.node_id, inbound.inbound_id)
-        if key in seen:
-            continue
-        selected.append(inbound)
-        seen.add(key)
-    return selected
 
 
 def _legacy_sub_id(existing_record: ClientRecord | None) -> str | None:

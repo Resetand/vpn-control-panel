@@ -14,7 +14,7 @@ from aiogram.enums import ChatMemberStatus
 import vpn_control_plane.backup.secrets as backup_secrets
 from vpn_control_plane.backup import build_data_backup
 from vpn_control_plane.config import Settings
-from vpn_control_plane.data import ClientRecord, JsonStateStore
+from vpn_control_plane.data import ClientRecord, ControlPlaneStore
 from vpn_control_plane.provisioning import ProvisioningResult
 from vpn_control_plane.subscription import SubscriptionService
 from vpn_control_plane.telegram.bot import (
@@ -47,12 +47,18 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def prepare_store(tmp_path: Path, *, subscription: JsonObject | None = None) -> JsonStateStore:
-    write_json(tmp_path / "nodes.json", [])
-    write_json(tmp_path / "clients.json", [])
-    write_json(tmp_path / "inbounds.json", [])
-    write_json(tmp_path / "subscription.json", subscription or {})
-    return JsonStateStore(tmp_path)
+def prepare_store(tmp_path: Path, *, subscription: JsonObject | None = None) -> ControlPlaneStore:
+    write_json(
+        tmp_path / "data.json",
+        {
+            "nodes": [],
+            "externalInbounds": [],
+            "clients": [],
+            "defaultClientInboundTags": [],
+            "subscription": subscription or {},
+        },
+    )
+    return ControlPlaneStore(tmp_path / "data.json")
 
 
 def settings(
@@ -62,7 +68,7 @@ def settings(
     backup_secrets_env_file: Path | None = None,
 ) -> Settings:
     values = {
-        "VPN_DATA_DIR": str(tmp_path),
+        "VPN_DATA_FILE": str(tmp_path / "data.json"),
         "VPN_SUBSCRIPTION_ROUTE": "/sub/",
         "VPN_SUBSCRIPTION_DOMAIN": "example.test",
         "VPN_SUBSCRIPTION_PORT": "443",
@@ -175,7 +181,7 @@ def test_access_control_helpers(tmp_path: Path) -> None:
 def test_start_access_policy_denies_all_when_allowed_users_are_unset(tmp_path: Path) -> None:
     app_settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
@@ -191,7 +197,7 @@ def test_start_access_policy_denies_all_when_allowed_users_are_unset(tmp_path: P
 def test_start_access_policy_supports_wildcard_allowed_users(tmp_path: Path) -> None:
     app_settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ALLOWED_USER_IDS": "*",
@@ -285,13 +291,13 @@ def test_build_data_backup_contains_only_control_plane_json_files(tmp_path: Path
     store = prepare_store(tmp_path, subscription={"announce": "Maintenance"})
     write_json(tmp_path / "runtime-cache.json", {"ignored": True})
 
-    backup = build_data_backup(store.data_dir)
+    backup = build_data_backup(store.data_file)
 
     with tarfile.open(fileobj=BytesIO(backup), mode="r:gz") as archive:
-        assert sorted(archive.getnames()) == ["clients.json", "inbounds.json", "nodes.json", "subscription.json"]
-        subscription_file = archive.extractfile("subscription.json")
-        assert subscription_file is not None
-        assert json.loads(subscription_file.read().decode("utf-8")) == {"announce": "Maintenance"}
+        assert sorted(archive.getnames()) == ["data.json"]
+        data_file = archive.extractfile("data.json")
+        assert data_file is not None
+        assert json.loads(data_file.read().decode("utf-8"))["subscription"] == {"announce": "Maintenance"}
 
 
 @pytest.mark.asyncio
@@ -342,7 +348,7 @@ async def test_help_status_id_and_plain_text_have_minimal_responses(tmp_path: Pa
 async def test_start_uses_allowed_chat_membership_when_configured(tmp_path: Path) -> None:
     app_settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
@@ -364,7 +370,7 @@ async def test_start_uses_allowed_chat_membership_when_configured(tmp_path: Path
 async def test_start_denies_non_member_when_allowed_chat_is_configured(tmp_path: Path) -> None:
     app_settings = Settings.model_validate(
         {
-            "VPN_DATA_DIR": str(tmp_path),
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
             "VPN_SUBSCRIPTION_ROUTE": "/sub/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_TELEGRAM_BOT_TOKEN": "token",

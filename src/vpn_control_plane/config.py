@@ -59,7 +59,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    data_dir: Path = Field(default=Path("data"), validation_alias="VPN_DATA_DIR")
+    data_file: Path = Field(default=Path("data.json"), validation_alias="VPN_DATA_FILE")
     http_host: str = Field(default="0.0.0.0", validation_alias="VPN_HTTP_HOST")
     http_port: Annotated[int, Field(ge=1, le=65535)] = Field(default=8080, validation_alias="VPN_HTTP_PORT")
     subscription_route: str = Field(default="/sub/", validation_alias="VPN_SUBSCRIPTION_ROUTE")

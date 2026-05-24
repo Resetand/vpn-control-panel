@@ -1,5 +1,10 @@
 from vpn_control_plane.backup.archive import CONTROL_PLANE_BACKUP_FILE_NAME, build_control_plane_backup
-from vpn_control_plane.backup.data import BACKUP_DATA_FILES, DATA_BACKUP_FILE_NAME, build_data_backup, write_data_backup
+from vpn_control_plane.backup.data import (
+    BACKUP_DATA_FILE_NAME,
+    DATA_BACKUP_FILE_NAME,
+    build_data_backup,
+    write_data_backup,
+)
 from vpn_control_plane.backup.nodes import build_node_backup_archive, collect_node_backup_files
 from vpn_control_plane.backup.secrets import (
     BACKUP_SECRETS_ENV_KEY,
@@ -12,7 +17,7 @@ from vpn_control_plane.backup.secrets import (
 )
 
 __all__ = [
-    "BACKUP_DATA_FILES",
+    "BACKUP_DATA_FILE_NAME",
     "BACKUP_SECRETS_ENV_KEY",
     "CONTROL_PLANE_BACKUP_FILE_NAME",
     "DATA_BACKUP_FILE_NAME",
