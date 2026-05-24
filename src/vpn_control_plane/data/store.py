@@ -131,7 +131,12 @@ class ControlPlaneStore:
                 temp_file.write(serialized)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
-            os.replace(temp_path, file_path)
+            try:
+                os.replace(temp_path, file_path)
+            except OSError:
+                # Docker bind mounts don't support atomic rename across overlay/host boundary;
+                # fall back to direct write (RLock already serialises concurrent access)
+                file_path.write_text(serialized, encoding="utf-8")
             temp_path = None
             self._fsync_directory(file_path.parent)
         finally:
