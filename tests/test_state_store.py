@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,23 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: py
     assert effective_inbound_tags(state, state.clients[0]) == ["eu", "extra"]
     assert state.subscription.profile_title == "base64:VGVzdA=="
     assert state.subscription.routing_enable is True
+
+
+def test_load_state_picks_up_atomic_data_file_replacement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    data_file = tmp_path / "data.json"
+    write_json(data_file, valid_state())
+    store = ControlPlaneStore(data_file)
+
+    assert store.load_state().clients[0].comment == "Kirill"
+
+    replacement = tmp_path / "data.json.new"
+    state = valid_state()
+    state["clients"] = [{"id": "123", "comment": "Updated", "subId": "updated-token"}]
+    write_json(replacement, state)
+    os.replace(replacement, data_file)
+
+    assert store.load_state().clients[0].comment == "Updated"
 
 
 def test_client_inbound_tags_override_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

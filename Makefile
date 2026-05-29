@@ -5,6 +5,10 @@ ENV_FILE ?= .env
 BACKUP ?=
 ENV_DATA_FILE := $(shell if test -f $(ENV_FILE); then sed -n 's/^VPN_HOST_DATA_FILE=//p' $(ENV_FILE) | tail -n 1; fi)
 VPN_HOST_DATA_FILE ?= $(if $(ENV_DATA_FILE),$(ENV_DATA_FILE),./data.json)
+VPN_HOST_DATA_DIR ?= $(patsubst %/,%,$(dir $(VPN_HOST_DATA_FILE)))
+VPN_DATA_FILE_NAME ?= $(notdir $(VPN_HOST_DATA_FILE))
+VPN_CONTAINER_DATA_FILE ?= /app/data/$(VPN_DATA_FILE_NAME)
+COMPOSE_ENV := VPN_ENV_FILE="$(ENV_FILE)" VPN_HOST_DATA_DIR="$(VPN_HOST_DATA_DIR)" VPN_DATA_FILE_NAME="$(VPN_DATA_FILE_NAME)" VPN_CONTAINER_DATA_FILE="$(VPN_CONTAINER_DATA_FILE)"
 
 init: $(ENV_FILE) init-data
 
@@ -23,27 +27,27 @@ restore-data:
 
 backup-data: $(ENV_FILE) init-data
 	mkdir -p backups
-	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup data --data-file /app/data.json --output /app/backups/data-$$(date +%Y%m%d-%H%M%S).tar.gz
+	$(COMPOSE_ENV) $(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup data --data-file "$(VPN_CONTAINER_DATA_FILE)" --output /app/backups/data-$$(date +%Y%m%d-%H%M%S).tar.gz
 
 backup-secrets: $(ENV_FILE)
 	mkdir -p backups
 	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup secrets --env-file /app/$(ENV_FILE) --output /app/backups/env.encrypted
 
 start: init
-	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx
+	$(COMPOSE_ENV) $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx
 
 build:
-	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" build app nginx
+	$(COMPOSE_ENV) $(COMPOSE) --env-file "$(ENV_FILE)" build app nginx
 
 stop:
 	$(COMPOSE) down
 
 restart:
 	$(COMPOSE) down
-	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx
+	$(COMPOSE_ENV) $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx
 
 logs:
-	VPN_ENV_FILE="$(ENV_FILE)" $(COMPOSE) --env-file "$(ENV_FILE)" logs -f -t app nginx
+	$(COMPOSE_ENV) $(COMPOSE) --env-file "$(ENV_FILE)" logs -f -t app nginx
 
 test:
 	$(COMPOSE) run --rm --build dev pytest

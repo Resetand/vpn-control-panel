@@ -54,6 +54,8 @@ VPN_DEFAULT_VLESS_FLOW=xtls-rprx-vision
 EU_3X_UI_NODE_API_TOKEN=replace-me
 ```
 
+`VPN_HOST_DATA_FILE` is the host-side data file path used by `make` commands. The Compose stack mounts the file's parent directory into the app container and reads `/app/data/<file-name>` so external atomic replacements of `data.json` are visible without restarting the app. Do not change the Compose volume back to a single-file bind mount, because Docker keeps that mount pinned to the old inode after `mv`/restore-style replacements.
+
 The public subscription URL is derived from those endpoint values. New clients receive an unguessable random `subId`, so their public URL looks like `https://your-domain.example/sub/<subId>`. To preserve an existing public URL, set the same domain, port, and route that clients already use.
 
 For a breaking data-format cutover, stop the app, place the prepared new `data.json` in the project root, deploy this version, restart the app, then verify `/health`, a known subscription URL, `/backup`, and Telegram `/backup`. Public URL compatibility is preserved by client `subId` and `legacySubId` fields in `data.json`.
@@ -119,6 +121,7 @@ make restore-data BACKUP=/path/to/data.tar.gz
 ```
 
 The archive should contain `data.json` at its root.
+Changes to `data.json` are loaded on the next request, bot command, or scheduled job; app restart is not required when the file is updated in place or atomically replaced.
 
 The project root must contain:
 
