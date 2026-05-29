@@ -527,6 +527,90 @@ async def test_inbound_xui_fallback_client_overrides_node_fallback_client(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_xui_fallback_client_uses_only_default_client_inbound_tags(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            nodes=[
+                {
+                    "id": 1,
+                    "host": "node-1.example.test",
+                    "port": 443,
+                    "basePath": "/panel/",
+                    "apiToken": "token-1",
+                    "xuiFallbackClientEmail": "default@example.test",
+                    "inbounds": [
+                        {"tag": "allowed", "label": "Allowed", "xuiInboundId": 1},
+                        {"tag": "blocked", "label": "Blocked", "xuiInboundId": 2},
+                    ],
+                }
+            ],
+            inbounds=[{"tag": "allowed", "label": "Allowed", "nodeId": 1, "xuiInboundId": 1}],
+        ),
+        {
+            (1, 1): xui_inbound(
+                1,
+                clients=[vless_client(sub_id="default", email="default@example.test", client_id="allowed-uuid")],
+            ),
+            (1, 2): xui_inbound(
+                2,
+                clients=[vless_client(sub_id="default", email="default@example.test", client_id="blocked-uuid")],
+            ),
+        },
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://allowed-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#Allowed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_xui_fallback_client_uses_only_client_inbound_tags(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            clients=[{"id": "123", "comment": "Existing", "inboundTags": ["allowed"]}],
+            nodes=[
+                {
+                    "id": 1,
+                    "host": "node-1.example.test",
+                    "port": 443,
+                    "basePath": "/panel/",
+                    "apiToken": "token-1",
+                    "xuiFallbackClientEmail": "default@example.test",
+                    "inbounds": [
+                        {"tag": "allowed", "label": "Allowed", "xuiInboundId": 1},
+                        {"tag": "blocked", "label": "Blocked", "xuiInboundId": 2},
+                    ],
+                }
+            ],
+            inbounds=[
+                {"tag": "allowed", "label": "Allowed", "nodeId": 1, "xuiInboundId": 1},
+                {"tag": "blocked", "label": "Blocked", "nodeId": 1, "xuiInboundId": 2},
+            ],
+        ),
+        {
+            (1, 1): xui_inbound(
+                1,
+                clients=[vless_client(sub_id="default", email="default@example.test", client_id="allowed-uuid")],
+            ),
+            (1, 2): xui_inbound(
+                2,
+                clients=[vless_client(sub_id="default", email="default@example.test", client_id="blocked-uuid")],
+            ),
+        },
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://allowed-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#Allowed"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_renders_base64_text_response_with_metadata_headers(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
