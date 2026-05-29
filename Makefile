@@ -1,8 +1,10 @@
-.PHONY: init init-data restore-data backup-data backup-secrets up run down stop logs ps build test lint format typecheck clean
+.PHONY: init init-data restore-data backup-data backup-secrets sync up run down stop logs ps build test lint format typecheck clean
 
 COMPOSE ?= docker compose
 ENV_FILE ?= .env
 BACKUP ?=
+DRY_RUN ?=
+SYNC_FLAGS := $(if $(DRY_RUN),--dry-run,)
 ENV_DATA_FILE := $(shell if test -f $(ENV_FILE); then sed -n 's/^VPN_HOST_DATA_FILE=//p' $(ENV_FILE) | tail -n 1; fi)
 VPN_HOST_DATA_FILE ?= $(if $(ENV_DATA_FILE),$(ENV_DATA_FILE),./data.json)
 VPN_HOST_DATA_DIR ?= $(patsubst %/,%,$(dir $(VPN_HOST_DATA_FILE)))
@@ -32,6 +34,9 @@ backup-data: $(ENV_FILE) init-data
 backup-secrets: $(ENV_FILE)
 	mkdir -p backups
 	$(COMPOSE) run --rm --build dev python -m vpn_control_plane.backup secrets --env-file /app/$(ENV_FILE) --output /app/backups/env.encrypted
+
+sync: $(ENV_FILE) init-data
+	$(COMPOSE_ENV) $(COMPOSE) run --rm --build dev python -m vpn_control_plane.sync --data-file "$(VPN_CONTAINER_DATA_FILE)" $(SYNC_FLAGS)
 
 start: init
 	$(COMPOSE_ENV) $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx

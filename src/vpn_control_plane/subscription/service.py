@@ -24,7 +24,7 @@ from vpn_control_plane.data import (
     effective_inbound_tags,
 )
 from vpn_control_plane.provisioning import client_email
-from vpn_control_plane.xui import XuiInbound, XuiNodeClient, build_xui_share_links
+from vpn_control_plane.xui import XuiNodeClient
 
 
 class SubscriptionError(RuntimeError):
@@ -99,11 +99,14 @@ class SubscriptionService:
 
         catalog = build_inbound_catalog(state)
         node_clients: dict[int, XuiNodeClient] = {}
-        node_inbounds_by_id: dict[int, dict[int, XuiInbound]] = {}
-        node_inbound_load_failures: set[int] = set()
+        # Per node, fetched once: {xui_inbound_id: remark} and {remark: panel link}.
+        node_remark_by_inbound: dict[int, dict[int, str]] = {}
+        node_link_by_remark: dict[int, dict[str, str]] = {}
+        node_traffic_done: set[int] = set()
         node_errors: list[str] = []
         links: list[str] = []
         traffic = SubscriptionTraffic()
+        email = client_email(client.id)
 
         try:
             for tag in effective_inbound_tags(state, client):
@@ -117,31 +120,59 @@ class SubscriptionService:
                 assert isinstance(catalog_inbound, NodeCatalogInbound)
                 node = catalog_inbound.node
                 node_inbound = catalog_inbound.inbound
+
                 node_client = node_clients.get(node.id)
                 if node_client is None:
                     node_client = self._node_client_factory(node)
                     node_clients[node.id] = node_client
-                if node.id in node_inbound_load_failures:
-                    continue
-                listed_inbounds = node_inbounds_by_id.get(node.id)
-                if listed_inbounds is None:
+
+                # Fetch the node's inbound remarks and the client's links once. The panel
+                # returns ALL of a client's links for the node (it does not filter by our
+                # tags), keyed only by inbound remark in the URL fragment — so we build a
+                # remark->link map and select per allowed inbound below.
+                if node.id not in node_link_by_remark:
                     try:
-                        listed_inbounds = {item.id: item for item in await node_client.list_inbounds()}
+                        inbounds = await node_client.list_inbounds()
+                        node_remark_by_inbound[node.id] = {
+                            ib.id: str(ib.raw.get("remark") or "") for ib in inbounds
+                        }
+                        link_list = await node_client.get_client_links(email)
+                        if not link_list:
+                            for fb_email in _fallback_client_emails(node, node_inbound):
+                                link_list = await node_client.get_client_links(fb_email)
+                                if link_list:
+                                    break
+                        link_map: dict[str, str] = {}
+                        for link in link_list:
+                            fragment = unquote(urlsplit(link).fragment)
+                            link_map.setdefault(fragment, link)
+                        node_link_by_remark[node.id] = link_map
                     except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
                         node_errors.append(f"node {node.id}: {exc}")
-                        node_inbound_load_failures.add(node.id)
-                        continue
-                    node_inbounds_by_id[node.id] = listed_inbounds
-                links.extend(
-                    await self._build_node_inbound_links(
-                        listed_inbounds.get(node_inbound.xui_inbound_id),
-                        node,
-                        node_inbound,
-                        client,
-                        node_errors,
-                        traffic,
-                    )
-                )
+                        node_remark_by_inbound[node.id] = {}
+                        node_link_by_remark[node.id] = {}
+
+                # Emit ONLY this allowed inbound's link, relabelled with our friendly label
+                # (the panel fragment is the inbound remark, not our control-plane label).
+                remark = node_remark_by_inbound.get(node.id, {}).get(node_inbound.xui_inbound_id)
+                link = node_link_by_remark.get(node.id, {}).get(remark) if remark else None
+                if link:
+                    links.append(_relabel_fragment(link, node_inbound.label))
+
+                # Best-effort traffic collection (once per node) — errors are silent so link delivery is unaffected.
+                if node.id not in node_traffic_done:
+                    node_traffic_done.add(node.id)
+                    try:
+                        traffic_obj = await node_client.get_client_traffic(email)
+                        if not traffic_obj:
+                            for fb_email in _fallback_client_emails(node, node_inbound):
+                                traffic_obj = await node_client.get_client_traffic(fb_email)
+                                if traffic_obj:
+                                    break
+                        if traffic_obj:
+                            traffic.add(traffic_obj)
+                    except Exception:  # noqa: BLE001 - traffic is non-fatal
+                        pass
         finally:
             for node_client in node_clients.values():
                 close = getattr(node_client, "close", None)
@@ -156,37 +187,6 @@ class SubscriptionService:
             subscription_userinfo=_build_subscription_userinfo(state.subscription.subscription_userinfo, traffic),
             node_errors=tuple(node_errors),
         )
-
-    async def _build_node_inbound_links(
-        self,
-        xui_inbound: XuiInbound | None,
-        node: NodeRecord,
-        inbound: NodeInboundRecord,
-        client: ClientRecord,
-        node_errors: list[str],
-        traffic: SubscriptionTraffic,
-    ) -> list[str]:
-        try:
-            if xui_inbound is None:
-                raise SubscriptionError(f"inbound {inbound.xui_inbound_id} was not found")
-            _add_client_traffic(traffic, xui_inbound, client)
-            if not _xui_inbound_is_enabled(xui_inbound.raw.get("enable", True)):
-                return []
-            links = build_xui_share_links(
-                xui_inbound,
-                fallback_address=node.host,
-                sub_id=client.effective_sub_id,
-                client_email=None,
-                fallback_email=client_email(client.id),
-                fallback_emails=_fallback_client_emails(node, inbound),
-                remark=inbound.label,
-            )
-            if not links:
-                return []
-            return [_ensure_fragment_label(link, inbound.label) for link in links]
-        except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
-            node_errors.append(f"node {node.id}: {exc}")
-            return []
 
     @staticmethod
     def _find_client(clients: Sequence[ClientRecord], requested_sub_id: str) -> ClientRecord | None:
@@ -402,45 +402,6 @@ def _parse_subscription_userinfo(value: str | None) -> dict[str, str]:
     return parsed
 
 
-def _add_client_traffic(
-    traffic: SubscriptionTraffic,
-    xui_inbound: object,
-    client: ClientRecord,
-) -> None:
-    raw = getattr(xui_inbound, "raw", {})
-    stats = raw.get("clientStats") if isinstance(raw, dict) else None
-    if not isinstance(stats, list):
-        return
-
-    fallback_email = client_email(client.id)
-    for stat in stats:
-        if _traffic_stat_matches_client(
-            stat,
-            sub_id=client.effective_sub_id,
-            client_email=None,
-            fallback_email=fallback_email,
-        ):
-            traffic.add(stat)
-
-
-def _traffic_stat_matches_client(
-    stat: object,
-    *,
-    sub_id: str,
-    client_email: str | None,
-    fallback_email: str | None,
-) -> bool:
-    if not isinstance(stat, dict):
-        return False
-    if client_email:
-        return _text(stat.get("email")) == client_email
-    return _text(stat.get("subId")) == sub_id or bool(fallback_email and _text(stat.get("email")) == fallback_email)
-
-
-def _text(value: object) -> str:
-    return "" if value is None else str(value).strip()
-
-
 def _nonnegative_int(value: object) -> int:
     if isinstance(value, bool):
         parsed = int(value)
@@ -472,12 +433,13 @@ def _ensure_fragment_label(uri: str, label: str) -> str:
     return f"{prefix}#{quote(label, safe='')}"
 
 
-def _xui_inbound_is_enabled(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no", "off"}
-    return bool(value)
+def _relabel_fragment(uri: str, label: str) -> str:
+    """Replace the URL fragment with the control-plane label (panel links carry the
+    inbound remark as the fragment). If we have no label, keep the panel's fragment."""
+    if not label:
+        return uri
+    prefix = uri.partition("#")[0]
+    return f"{prefix}#{quote(label, safe='')}"
 
 
 def _base64_header(value: str) -> str:

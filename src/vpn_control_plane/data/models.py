@@ -78,11 +78,12 @@ class ExternalInboundRecord(StateModel):
 class ClientRecord(StateModel):
     id: Annotated[str, Field(min_length=1)]
     comment: str = ""
+    telegram_id: str | None = Field(default=None, alias="telegramId")
     sub_id: str | None = Field(default=None, alias="subId")
     legacy_sub_id: str | None = Field(default=None, alias="legacySubId")
     inbound_tags: list[str] | None = Field(default=None, alias="inboundTags")
 
-    @field_validator("id", "sub_id", "legacy_sub_id")
+    @field_validator("id", "telegram_id", "sub_id", "legacy_sub_id")
     @classmethod
     def strip_identifier(cls, value: str | None) -> str | None:
         if value is None:

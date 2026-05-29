@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,7 +9,7 @@ import pytest
 
 from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.provisioning import ProvisioningService, client_email, telegram_client_id
-from vpn_control_plane.xui import XuiAddClientResult, XuiInbound
+from vpn_control_plane.xui import XuiClientInfo, XuiInbound
 
 JsonObject = dict[str, Any]
 SUBSCRIPTION_ID = "eHh4eHh4eHh4eHh4eHh4eHh4"
@@ -81,32 +80,50 @@ def build_state(
     }
 
 
-def inbound(inbound_id: int, protocol: str = "vless", clients: list[JsonObject] | None = None) -> XuiInbound:
+def inbound(inbound_id: int, protocol: str = "vless", *, network: str = "tcp") -> XuiInbound:
     return XuiInbound(
         id=inbound_id,
         protocol=protocol,
-        settings={"clients": clients or []},
-        stream_settings={"network": "tcp"},
+        settings={},
+        stream_settings={"network": network},
         sniffing={},
         raw={},
     )
 
 
 class FakeXuiClient:
-    def __init__(self, node: NodeRecord, inbounds_by_node: dict[int, list[XuiInbound]]) -> None:
+    """Fake XuiNodeClient that simulates 3x-ui v3.2.0 client-first API."""
+
+    def __init__(
+        self,
+        node: NodeRecord,
+        available_inbounds: list[XuiInbound],
+        initial_clients: dict[str, XuiClientInfo] | None = None,
+    ) -> None:
         self.node = node
-        self.inbounds_by_node = inbounds_by_node
-        self.added: list[tuple[int, JsonObject]] = []
+        self._available_inbounds = available_inbounds
+        self._clients: dict[str, XuiClientInfo] = dict(initial_clients or {})
+        self.add_calls: list[tuple[JsonObject, list[int]]] = []
+        self.attach_calls: list[tuple[str, list[int]]] = []
         self.closed = False
 
     async def list_inbounds(self) -> list[XuiInbound]:
-        return self.inbounds_by_node[self.node.id]
+        return self._available_inbounds
 
-    async def add_client(self, inbound_id: int, client_payload: JsonObject) -> XuiAddClientResult:
-        self.added.append((inbound_id, client_payload))
-        target = next(candidate for candidate in self.inbounds_by_node[self.node.id] if candidate.id == inbound_id)
-        target.settings.setdefault("clients", []).append(client_payload)
-        return XuiAddClientResult(created=True)
+    async def get_client(self, email: str) -> XuiClientInfo | None:
+        return self._clients.get(email)
+
+    async def add_client(self, client: JsonObject, inbound_ids: list[int]) -> None:
+        self.add_calls.append((client, inbound_ids))
+        email = str(client.get("email", ""))
+        self._clients[email] = XuiClientInfo(client=client, inbound_ids=list(inbound_ids))
+
+    async def attach_client(self, email: str, inbound_ids: list[int]) -> None:
+        self.attach_calls.append((email, inbound_ids))
+        existing = self._clients.get(email)
+        if existing is not None:
+            merged = sorted(set(existing.inbound_ids) | set(inbound_ids))
+            self._clients[email] = XuiClientInfo(client=existing.client, inbound_ids=merged)
 
     async def close(self) -> None:
         self.closed = True
@@ -115,34 +132,36 @@ class FakeXuiClient:
 def service_with_fakes(
     store: ControlPlaneStore,
     inbounds_by_node: dict[int, list[XuiInbound]],
+    initial_clients_by_node: dict[int, dict[str, XuiClientInfo]] | None = None,
 ) -> tuple[ProvisioningService, dict[int, FakeXuiClient]]:
-    clients: dict[int, FakeXuiClient] = {}
+    fake_clients: dict[int, FakeXuiClient] = {}
+    initial_clients_by_node = initial_clients_by_node or {}
 
     def factory(node: NodeRecord) -> FakeXuiClient:
-        client = clients.get(node.id)
+        client = fake_clients.get(node.id)
         if client is None:
-            client = FakeXuiClient(node, inbounds_by_node)
-            clients[node.id] = client
+            client = FakeXuiClient(
+                node, inbounds_by_node[node.id], initial_clients_by_node.get(node.id)
+            )
+            fake_clients[node.id] = client
         return client
 
     service = ProvisioningService(
         store,
         node_client_factory=cast(Any, factory),
-        uuid_factory=lambda: uuid.UUID("11111111-1111-1111-1111-111111111111"),
-        random_bytes=lambda size: b"x" * size,
         subscription_id_factory=lambda: SUBSCRIPTION_ID,
     )
-    return service, clients
+    return service, fake_clients
 
 
 @pytest.mark.asyncio
-async def test_selects_control_plane_ids_and_legacy_email() -> None:
+async def test_selects_control_plane_ids_and_email() -> None:
     assert telegram_client_id(123456789) == "123456789"
     assert client_email("123456789") == "123456789"
 
 
 @pytest.mark.asyncio
-async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_record(tmp_path: Path) -> None:
+async def test_new_client_provisioning_adds_to_all_nodes_and_persists_record(tmp_path: Path) -> None:
     store = prepare_store(tmp_path)
     service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vmess")]})
 
@@ -151,11 +170,20 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
     assert result.client.id == "123"
     assert result.client.effective_sub_id == SUBSCRIPTION_ID
     assert result.created == 2
-    assert clients[1].added[0][1]["email"] == client_email("123")
-    assert clients[1].added[0][1]["subId"] == SUBSCRIPTION_ID
-    assert clients[1].added[0][1]["tgId"] == 123
-    assert clients[1].added[0][1]["flow"] == "xtls-rprx-vision"
-    assert clients[2].added[0][1]["email"] == client_email("123")
+    # Node 1: one add_client call with all target inbound ids
+    assert len(clients[1].add_calls) == 1
+    payload_1, ids_1 = clients[1].add_calls[0]
+    assert payload_1["email"] == client_email("123")
+    assert payload_1["subId"] == SUBSCRIPTION_ID
+    assert payload_1["tgId"] == 123
+    assert payload_1["flow"] == "xtls-rprx-vision"  # vless + tcp
+    assert ids_1 == [1]
+    # Node 2: vmess gets no flow
+    assert len(clients[2].add_calls) == 1
+    payload_2, ids_2 = clients[2].add_calls[0]
+    assert payload_2["email"] == client_email("123")
+    assert payload_2["flow"] == ""  # vmess → no flow
+    assert ids_2 == [2]
     saved = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
     assert saved["clients"] == [
         {
@@ -167,23 +195,27 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
 
 
 @pytest.mark.asyncio
-async def test_returning_client_does_not_create_or_overwrite_existing_key_material(tmp_path: Path) -> None:
+async def test_returning_client_skips_all_nodes_when_all_inbounds_present(tmp_path: Path) -> None:
     store = prepare_store(tmp_path, clients=[{"id": "123", "comment": "Existing"}])
-    existing_one = {"email": client_email("123"), "id": "keep-uuid", "subId": "legacy-sub", "flow": "xtls-rprx-vision"}
-    existing_two = {"email": client_email("123"), "password": "keep-password", "subId": "legacy-sub"}
+    email = client_email("123")
+    initial = {
+        1: {email: XuiClientInfo(client={"email": email}, inbound_ids=[1])},
+        2: {email: XuiClientInfo(client={"email": email}, inbound_ids=[2])},
+    }
     service, clients = service_with_fakes(
         store,
-        {1: [inbound(1, "vless", [existing_one])], 2: [inbound(2, "trojan", [existing_two])]},
+        {1: [inbound(1, "vless")], 2: [inbound(2, "trojan")]},
+        initial,
     )
 
     result = await service.ensure_client("123", comment="New comment")
 
     assert result.created == 0
     assert result.reused == 2
-    assert clients[1].added == []
-    assert clients[2].added == []
-    assert existing_one["id"] == "keep-uuid"
-    assert existing_two["password"] == "keep-password"
+    assert clients[1].add_calls == []
+    assert clients[2].add_calls == []
+    assert clients[1].attach_calls == []
+    assert clients[2].attach_calls == []
     saved = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
     assert saved["clients"] == [
         {
@@ -196,23 +228,52 @@ async def test_returning_client_does_not_create_or_overwrite_existing_key_materi
 
 
 @pytest.mark.asyncio
-async def test_partial_provisioning_creates_only_missing_inbounds_with_existing_sub_id(tmp_path: Path) -> None:
+async def test_partial_provisioning_adds_only_missing_cross_node_inbounds(tmp_path: Path) -> None:
+    # Node 1 already has the client; node 2 does not.
     store = prepare_store(tmp_path)
+    email = client_email("123")
+    initial = {1: {email: XuiClientInfo(client={"email": email}, inbound_ids=[1])}}
     service, clients = service_with_fakes(
         store,
-        {
-            1: [inbound(1, "vless", [{"email": "123", "id": "keep", "subId": "legacy-sub"}])],
-            2: [inbound(2, "trojan")],
-        },
+        {1: [inbound(1, "vless")], 2: [inbound(2, "trojan")]},
+        initial,
     )
 
     result = await service.ensure_client("123", comment="Partial")
 
     assert result.created == 1
-    assert clients[1].added == []
-    assert clients[2].added[0][1]["email"] == client_email("123")
-    assert clients[2].added[0][1]["subId"] == SUBSCRIPTION_ID
-    assert clients[2].added[0][1]["password"] == "11111111-1111-1111-1111-111111111111"
+    assert result.reused == 1
+    assert clients[1].add_calls == []
+    assert len(clients[2].add_calls) == 1
+    assert clients[2].add_calls[0][0]["email"] == email
+    assert clients[2].add_calls[0][0]["subId"] == SUBSCRIPTION_ID
+
+
+@pytest.mark.asyncio
+async def test_partial_provisioning_attaches_missing_inbounds_within_a_node(tmp_path: Path) -> None:
+    # One node with two target inbounds; client exists but only on inbound 1.
+    store = prepare_store(
+        tmp_path,
+        inbounds=[
+            {"tag": "a", "label": "A", "nodeId": 1, "xuiInboundId": 1},
+            {"tag": "b", "label": "B", "nodeId": 1, "xuiInboundId": 2},
+        ],
+    )
+    email = client_email("123")
+    initial = {1: {email: XuiClientInfo(client={"email": email}, inbound_ids=[1])}}
+    service, clients = service_with_fakes(
+        store,
+        {1: [inbound(1, "vless"), inbound(2, "vless")]},
+        initial,
+    )
+
+    result = await service.ensure_client("123", comment="Attach missing")
+
+    assert result.created == 1
+    assert result.reused == 1
+    assert clients[1].add_calls == []
+    assert len(clients[1].attach_calls) == 1
+    assert clients[1].attach_calls[0] == (email, [2])
 
 
 @pytest.mark.asyncio
@@ -224,16 +285,16 @@ async def test_external_inbounds_are_skipped_during_provisioning(tmp_path: Path)
             {"label": "One", "nodeId": 1, "xuiInboundId": 1},
         ],
     )
-    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
+    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: []})
 
     await service.ensure_client("123", comment="Skip external")
 
-    assert len(clients[1].added) == 1
+    assert len(clients[1].add_calls) == 1
     assert 2 not in clients
 
 
 @pytest.mark.asyncio
-async def test_existing_client_explicit_inbound_tags_define_provisioning_scope(tmp_path: Path) -> None:
+async def test_explicit_client_inbound_tags_restrict_provisioning_scope(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
         clients=[{"id": "123", "comment": "Existing", "inboundTags": ["personal"]}],
@@ -247,50 +308,67 @@ async def test_existing_client_explicit_inbound_tags_define_provisioning_scope(t
     result = await service.ensure_client("123", comment="Keep override")
 
     assert result.created == 1
-    assert 1 not in clients
-    assert clients[2].added[0][1]["email"] == client_email("123")
+    assert 1 not in clients  # node 1 not touched
+    assert clients[2].add_calls[0][0]["email"] == client_email("123")
     assert result.client.inbound_tags == ["personal"]
 
 
 @pytest.mark.asyncio
-async def test_payload_generation_supports_vmess_trojan_and_shadowsocks(tmp_path: Path) -> None:
-    store = prepare_store(tmp_path)
-    service, _clients = service_with_fakes(store, {1: [inbound(1)], 2: [inbound(2)]})
+async def test_vless_flow_applied_when_all_node_targets_are_tcp_vless(tmp_path: Path) -> None:
+    store = prepare_store(tmp_path, inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}])
+    service = ProvisioningService(store, default_vless_flow="custom-flow")
 
-    vmess = service.build_client_payload(inbound(1, "vmess"), client_id="c", sub_id="s", comment="C")
-    trojan = service.build_client_payload(inbound(2, "trojan"), client_id="c", sub_id="s", comment="C")
-    shadowsocks = service.build_client_payload(inbound(3, "shadowsocks"), client_id="c", sub_id="s", comment="C")
-    shadowsocks_2022 = service.build_client_payload(
-        XuiInbound(4, "shadowsocks", {"method": "2022-blake3-aes-256-gcm"}, {}, {}, {}),
-        client_id="c",
-        sub_id="s",
-        comment="C",
-    )
-
-    assert vmess["id"] == "11111111-1111-1111-1111-111111111111"
-    assert trojan["password"] == "11111111-1111-1111-1111-111111111111"
-    assert shadowsocks["password"] == "11111111-1111-1111-1111-111111111111"
-    assert shadowsocks_2022["method"] == ""
-    assert shadowsocks_2022["password"] == "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg="
+    # TCP vless → flow set
+    tcp_flow = service._compute_node_flow([inbound(1, "vless", network="tcp")])
+    assert tcp_flow == "custom-flow"
 
 
 @pytest.mark.asyncio
-async def test_vless_flow_is_configurable_and_applies_only_to_tcp_vless(tmp_path: Path) -> None:
+async def test_vless_flow_empty_for_non_tcp_or_non_vless_inbounds(tmp_path: Path) -> None:
+    store = prepare_store(tmp_path, inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}])
+    service = ProvisioningService(store, default_vless_flow="custom-flow")
+
+    ws_flow = service._compute_node_flow([inbound(1, "vless", network="ws")])
+    vmess_flow = service._compute_node_flow([inbound(1, "vmess")])
+    assert ws_flow == ""
+    assert vmess_flow == ""
+
+
+@pytest.mark.asyncio
+async def test_vless_flow_empty_when_mixed_tcp_and_non_tcp_vless_on_same_node(tmp_path: Path) -> None:
     store = prepare_store(tmp_path)
     service = ProvisioningService(store, default_vless_flow="custom-flow")
 
-    vless_tcp = service.build_client_payload(inbound(1, "vless"), client_id="c", sub_id="s", comment="C")
-    vless_ws = service.build_client_payload(
-        XuiInbound(2, "vless", {"clients": []}, {"network": "ws"}, {}, {}),
-        client_id="c",
-        sub_id="s",
-        comment="C",
-    )
-    vmess_tcp = service.build_client_payload(inbound(3, "vmess"), client_id="c", sub_id="s", comment="C")
+    mixed_flow = service._compute_node_flow([
+        inbound(1, "vless", network="tcp"),
+        inbound(2, "vless", network="ws"),
+    ])
+    assert mixed_flow == ""
 
-    assert vless_tcp["flow"] == "custom-flow"
-    assert vless_ws["flow"] == ""
-    assert vmess_tcp["flow"] == ""
+
+@pytest.mark.asyncio
+async def test_client_payload_contains_required_fields_without_credentials(tmp_path: Path) -> None:
+    store = prepare_store(tmp_path)
+    service = ProvisioningService(store)
+
+    payload = service._build_client_payload(
+        client_id="456",
+        sub_id="sub-xyz",
+        comment="Test user",
+        telegram_id=456,
+        flow="xtls-rprx-vision",
+    )
+
+    assert payload["email"] == client_email("456")
+    assert payload["subId"] == "sub-xyz"
+    assert payload["comment"] == "Test user"
+    assert payload["tgId"] == 456
+    assert payload["flow"] == "xtls-rprx-vision"
+    assert payload["enable"] is True
+    # Server generates credentials — no id/password/auth in payload
+    assert "id" not in payload
+    assert "password" not in payload
+    assert "auth" not in payload
 
 
 @pytest.mark.asyncio
@@ -303,4 +381,4 @@ async def test_concurrent_provisioning_for_same_client_is_serialized(tmp_path: P
         service.ensure_client("123", comment="Concurrent"),
     )
 
-    assert len(clients[1].added) == 1
+    assert len(clients[1].add_calls) == 1

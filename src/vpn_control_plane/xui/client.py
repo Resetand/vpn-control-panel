@@ -22,10 +22,6 @@ class XuiApiError(XuiError):
     pass
 
 
-class XuiDuplicateClientError(XuiApiError):
-    pass
-
-
 JsonObject = dict[str, Any]
 
 
@@ -50,9 +46,9 @@ class XuiInbound:
 
 
 @dataclass(frozen=True)
-class XuiAddClientResult:
-    created: bool
-    client: JsonObject | None = None
+class XuiClientInfo:
+    client: JsonObject
+    inbound_ids: list[int]
 
 
 @dataclass(frozen=True)
@@ -89,16 +85,6 @@ def normalize_base_path(value: str) -> str:
     if not value.endswith("/"):
         value = f"{value}/"
     return value
-
-
-def find_client_by_email(inbound: XuiInbound, email: str) -> JsonObject | None:
-    clients = inbound.settings.get("clients", [])
-    if not isinstance(clients, list):
-        return None
-    for client in clients:
-        if isinstance(client, dict) and client.get("email") == email:
-            return client
-    return None
 
 
 class XuiNodeClient:
@@ -171,29 +157,90 @@ class XuiNodeClient:
         except (KeyError, TypeError, ValueError) as exc:
             raise XuiApiError(f"3x-UI status returned malformed payload for node {self.node.id}: {exc}") from exc
 
-    async def add_client(self, inbound_id: int, client_payload: JsonObject) -> XuiAddClientResult:
-        email = str(client_payload.get("email") or "")
-        operation = "xui.add_client"
-        body = await self._request_json(
-            "POST",
-            "/panel/api/inbounds/addClient",
-            operation=operation,
-            data={"id": str(inbound_id), "settings": json.dumps({"clients": [client_payload]}, ensure_ascii=False)},
-        )
-        if body.get("success"):
-            return XuiAddClientResult(created=True)
+    async def get_client(self, email: str) -> XuiClientInfo | None:
+        operation = "xui.get_client"
+        response = await self._request("GET", f"/panel/api/clients/get/{email}", operation=operation)
+        if response.status_code == 404:
+            return None
+        body = _response_json(response)
+        if not body.get("success"):
+            return None
+        obj = body.get("obj")
+        if not isinstance(obj, dict):
+            return None
+        client = obj.get("client")
+        inbound_ids = obj.get("inboundIds")
+        if not isinstance(client, dict) or not isinstance(inbound_ids, list):
+            return None
+        return XuiClientInfo(client=client, inbound_ids=[int(i) for i in inbound_ids])
 
-        message = _api_message(body)
-        if _is_duplicate_email(message):
-            inbound = await self.get_inbound(inbound_id)
-            existing = find_client_by_email(inbound, email) if inbound else None
-            if existing is not None:
-                return XuiAddClientResult(created=False, client=existing)
-            raise XuiDuplicateClientError(
-                f"3x-UI reported duplicate email {email!r} on node {self.node.id}, inbound {inbound_id}, "
-                "but re-read did not find the client"
-            )
-        raise XuiApiError(f"3x-UI add client failed for node {self.node.id}, inbound {inbound_id}: {message}")
+    async def add_client(self, client: JsonObject, inbound_ids: list[int]) -> None:
+        operation = "xui.add_client"
+        await self._post_json_success(
+            "/panel/api/clients/add",
+            body={"client": client, "inboundIds": inbound_ids},
+            operation=operation,
+        )
+
+    async def attach_client(self, email: str, inbound_ids: list[int]) -> None:
+        operation = "xui.attach_client"
+        await self._post_json_success(
+            f"/panel/api/clients/{email}/attach",
+            body={"inboundIds": inbound_ids},
+            operation=operation,
+        )
+
+    async def list_clients(self) -> list[XuiClientInfo]:
+        operation = "xui.list_clients"
+        body = await self._request_json("GET", "/panel/api/clients/list", operation=operation)
+        if not body.get("success"):
+            logger.warning("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
+            raise XuiApiError(f"3x-UI client list failed for node {self.node.id}: {_api_message(body)}")
+        raw_clients = body.get("obj") or []
+        if not isinstance(raw_clients, list):
+            raise XuiApiError(f"3x-UI client list returned invalid payload for node {self.node.id}")
+        clients: list[XuiClientInfo] = []
+        for row in raw_clients:
+            if not isinstance(row, dict) or not row.get("email"):
+                continue
+            client = dict(row)
+            raw_inbound_ids = client.pop("inboundIds", None)
+            client.pop("traffic", None)
+            inbound_ids = [int(i) for i in raw_inbound_ids] if isinstance(raw_inbound_ids, list) else []
+            clients.append(XuiClientInfo(client=client, inbound_ids=inbound_ids))
+        return clients
+
+    async def update_client(self, email: str, client: JsonObject) -> None:
+        operation = "xui.update_client"
+        await self._post_json_success(
+            f"/panel/api/clients/update/{email}",
+            body=_writable_client_payload(client),
+            operation=operation,
+        )
+
+    async def get_client_links(self, email: str) -> list[str]:
+        operation = "xui.get_client_links"
+        response = await self._request("GET", f"/panel/api/clients/links/{email}", operation=operation)
+        if response.status_code == 404:
+            return []
+        body = _response_json(response)
+        if not body.get("success"):
+            return []
+        obj = body.get("obj")
+        if not isinstance(obj, list):
+            return []
+        return [str(link) for link in obj if link]
+
+    async def get_client_traffic(self, email: str) -> JsonObject | None:
+        operation = "xui.get_client_traffic"
+        response = await self._request("GET", f"/panel/api/clients/traffic/{email}", operation=operation)
+        if response.status_code == 404:
+            return None
+        body = _response_json(response)
+        if not body.get("success"):
+            return None
+        obj = body.get("obj")
+        return obj if isinstance(obj, dict) else None
 
     async def _request_json(self, method: str, path: str, *, operation: str, **kwargs: Any) -> JsonObject:
         response = await self._request(method, path, operation=operation, **kwargs)
@@ -228,6 +275,16 @@ class XuiNodeClient:
                 extra={"node_id": self.node.id, "operation": operation, "status_code": response.status_code},
             )
             raise XuiApiError(f"3x-UI {operation} failed for node {self.node.id}: {_api_message(body)}")
+
+    async def _post_json_success(self, path: str, *, body: Any, operation: str) -> None:
+        response = await self._request("POST", path, operation=operation, json=body)
+        resp_body = _response_json(response)
+        if response.status_code >= 400 or not resp_body.get("success"):
+            logger.warning(
+                "3x-UI operation failed",
+                extra={"node_id": self.node.id, "operation": operation, "status_code": response.status_code},
+            )
+            raise XuiApiError(f"3x-UI {operation} failed for node {self.node.id}: {_api_message(resp_body)}")
 
     async def _request(self, method: str, path: str, *, operation: str, **kwargs: Any) -> httpx.Response:
         logger.info("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
@@ -326,10 +383,21 @@ def _parse_status(raw_status: JsonObject) -> XuiNodeStatus:
     )
 
 
+def _writable_client_payload(client: JsonObject) -> JsonObject:
+    """Adapt a client row from the read endpoints into the shape the update endpoint accepts.
+
+    The list/get endpoints return ``id`` as the numeric DB primary key plus the protocol
+    secret in ``uuid``/``password``/``auth``, but the update endpoint expects ``id`` to be
+    that string secret. Read-only/denormalized fields are dropped.
+    """
+    payload = dict(client)
+    payload.pop("traffic", None)
+    payload.pop("inboundIds", None)
+    identity = payload.get("uuid") or payload.get("password") or payload.get("auth")
+    if isinstance(identity, str) and identity:
+        payload["id"] = identity
+    return payload
+
+
 def _api_message(body: JsonObject) -> str:
     return str(body.get("msg") or body.get("message") or "unknown error")
-
-
-def _is_duplicate_email(message: str) -> bool:
-    normalized = message.lower()
-    return "duplicate" in normalized and "email" in normalized

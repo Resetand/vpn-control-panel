@@ -98,31 +98,46 @@ def build_state(
 
 
 class FakeXuiClient:
+    """Simulates the 3x-ui v3.2.0 panel client: returns links/traffic keyed by email."""
+
     def __init__(
         self,
         node: NodeRecord,
-        inbounds_by_key: Mapping[tuple[int, int], XuiInbound | Exception | None],
+        links_by_email: Mapping[str, list[str] | Exception],
+        traffic_by_email: Mapping[str, JsonObject | Exception] | None = None,
     ) -> None:
         self.node = node
-        self.inbounds_by_key = inbounds_by_key
+        self._links_by_email = links_by_email
+        self._traffic_by_email: Mapping[str, JsonObject | Exception] = traffic_by_email or {}
         self.closed = False
 
-    async def get_inbound(self, inbound_id: int) -> XuiInbound | None:
-        value = self.inbounds_by_key.get((self.node.id, inbound_id))
+    async def list_inbounds(self) -> list[XuiInbound]:
+        # The panel keys each client link by the inbound *remark*; the control plane
+        # maps allowed inbounds -> remark via list_inbounds. In these tests the inbound
+        # remark equals the control-plane label (which is also the link fragment).
+        return [
+            XuiInbound(
+                id=ib.xui_inbound_id,
+                protocol="",
+                settings={},
+                stream_settings={},
+                sniffing={},
+                raw={"remark": ib.label},
+            )
+            for ib in self.node.inbounds
+        ]
+
+    async def get_client_links(self, email: str) -> list[str]:
+        value = self._links_by_email.get(email)
         if isinstance(value, Exception):
             raise value
-        return value
+        return list(value) if value else []
 
-    async def list_inbounds(self) -> list[XuiInbound]:
-        inbounds: list[XuiInbound] = []
-        for (node_id, _inbound_id), value in self.inbounds_by_key.items():
-            if node_id != self.node.id:
-                continue
-            if isinstance(value, Exception):
-                raise value
-            if value is not None:
-                inbounds.append(value)
-        return inbounds
+    async def get_client_traffic(self, email: str) -> JsonObject | None:
+        value = self._traffic_by_email.get(email)
+        if isinstance(value, Exception):
+            raise value
+        return value if isinstance(value, dict) else None
 
     async def close(self) -> None:
         self.closed = True
@@ -130,10 +145,13 @@ class FakeXuiClient:
 
 def service_with_fakes(
     store: ControlPlaneStore,
-    inbounds_by_key: Mapping[tuple[int, int], XuiInbound | Exception | None],
+    links_by_key: Mapping[tuple[int, str], list[str] | Exception],
+    traffic_by_key: Mapping[tuple[int, str], JsonObject | Exception] | None = None,
 ) -> SubscriptionService:
     def factory(node: NodeRecord) -> FakeXuiClient:
-        return FakeXuiClient(node, inbounds_by_key)
+        node_links = {email: val for (nid, email), val in links_by_key.items() if nid == node.id}
+        node_traffic = {email: val for (nid, email), val in (traffic_by_key or {}).items() if nid == node.id}
+        return FakeXuiClient(node, node_links, node_traffic)
 
     return SubscriptionService(
         store,
@@ -142,60 +160,20 @@ def service_with_fakes(
     )
 
 
-def xui_inbound(
-    inbound_id: int,
-    *,
-    protocol: str = "vless",
-    clients: list[JsonObject] | None = None,
-    client_stats: list[JsonObject] | None = None,
-    stream_settings: JsonObject | None = None,
-    settings: JsonObject | None = None,
-    port: int = 443,
-    enable: bool = True,
-) -> XuiInbound:
-    parsed_settings = {"clients": clients if clients is not None else [vless_client()]}
-    parsed_settings.update(settings or {})
-    parsed_stream_settings = stream_settings or {"network": "tcp", "security": "none"}
-    raw = {
-        "id": inbound_id,
-        "protocol": protocol,
-        "listen": "",
-        "port": port,
-        "enable": enable,
-        "settings": parsed_settings,
-        "streamSettings": parsed_stream_settings,
-        "sniffing": {},
-    }
-    if client_stats is not None:
-        raw["clientStats"] = client_stats
-    return XuiInbound(
-        id=inbound_id,
-        protocol=protocol,
-        settings=parsed_settings,
-        stream_settings=parsed_stream_settings,
-        sniffing={},
-        raw=raw,
-    )
+# ---------------------------------------------------------------------------
+# Link helper: shorthand for expected panel-provided links.
+# The panel generates links with the remark from the 3x-ui inbound config.
+# ---------------------------------------------------------------------------
 
+NODE_1_LINK_ONE = "vless://uuid-one@node-1.example.test:443?type=tcp&security=reality#One"
+NODE_1_LINK_TWO = "trojan://pwd-two@node-1.example.test:443?type=tcp#Two"
+NODE_2_LINK = "trojan://pwd-two@node-2.example.test:443?type=tcp#Two"
 
-def vless_client(
-    *,
-    sub_id: str = "123",
-    email: str = client_email("123"),
-    client_id: str = "client-uuid",
-) -> JsonObject:
-    return {"id": client_id, "email": email, "subId": sub_id, "flow": ""}
+DEFAULT_EMAIL = client_email("123")
 
-
-def default_node_inbounds() -> dict[tuple[int, int], XuiInbound]:
-    return {
-        (1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")]),
-        (1, 2): xui_inbound(
-            2,
-            protocol="trojan",
-            clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
-        ),
-    }
+DEFAULT_NODE_LINKS: dict[tuple[int, str], list[str]] = {
+    (1, DEFAULT_EMAIL): [NODE_1_LINK_ONE, NODE_1_LINK_TWO],
+}
 
 
 def test_builds_legacy_public_subscription_url() -> None:
@@ -233,54 +211,25 @@ async def test_unknown_subscription_client_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_builds_node_and_external_links_in_inbounds_file_order(tmp_path: Path) -> None:
+async def test_builds_links_in_tag_order_interleaving_external_links(tmp_path: Path) -> None:
+    # Each link is emitted at its own tag's position, so external links interleave between
+    # this node's inbounds (tag order: One, External, Two).
     service = service_with_fakes(
         prepare_store(tmp_path),
-        {
-            (1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")]),
-            (1, 2): xui_inbound(
-                2,
-                protocol="trojan",
-                clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
-            ),
-        },
+        {(1, DEFAULT_EMAIL): [NODE_1_LINK_ONE, NODE_1_LINK_TWO]},
     )
 
     subscription = await service.build("123")
 
     assert subscription.links == [
-        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One",
+        NODE_1_LINK_ONE,
         "vless://external#External",
-        "trojan://node-two@node-1.example.test:443?type=tcp&security=none#Two",
+        NODE_1_LINK_TWO,
     ]
 
 
 @pytest.mark.asyncio
-async def test_disabled_node_inbound_is_ignored_without_node_error(tmp_path: Path) -> None:
-    service = service_with_fakes(
-        prepare_store(tmp_path),
-        {
-            (1, 1): xui_inbound(1, clients=[vless_client(client_id="node-one")]),
-            (1, 2): xui_inbound(
-                2,
-                protocol="trojan",
-                clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
-                enable=False,
-            ),
-        },
-    )
-
-    subscription = await service.build("123")
-
-    assert subscription.links == [
-        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One",
-        "vless://external#External",
-    ]
-    assert subscription.node_errors == ()
-
-
-@pytest.mark.asyncio
-async def test_build_adds_inbound_label_fragment_when_external_link_has_no_name(tmp_path: Path) -> None:
+async def test_external_link_fragment_is_added_when_missing(tmp_path: Path) -> None:
     service = service_with_fakes(
         prepare_store(
             tmp_path,
@@ -297,87 +246,79 @@ async def test_build_adds_inbound_label_fragment_when_external_link_has_no_name(
 
 
 @pytest.mark.asyncio
-async def test_sub_id_resolves_client_and_fetches_by_xui_fallback_email(tmp_path: Path) -> None:
-    service = SubscriptionService(
-        prepare_store(
-            tmp_path,
-            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
-            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
-        ),
-        public_base_url="https://resetand.my.id:2096/sub",
-        node_client_factory=cast(
-            Any,
-            lambda node: FakeXuiClient(
-                node,
-                {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="legacy-sub", client_id="legacy-uuid")])},
-            ),
-        ),
-    )
-
-    subscription = await service.build("personal-token")
-
-    assert subscription.links == [
-        "vless://legacy-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
-    assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
-
-
-@pytest.mark.asyncio
-async def test_client_id_request_resolves_client_with_separate_effective_sub_id(tmp_path: Path) -> None:
-    service = SubscriptionService(
-        prepare_store(
-            tmp_path,
-            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
-            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
-        ),
-        public_base_url="https://resetand.my.id:2096/sub",
-        node_client_factory=cast(
-            Any,
-            lambda node: FakeXuiClient(
-                node,
-                {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="legacy-sub", client_id="legacy-uuid")])},
-            ),
-        ),
+async def test_external_link_fragment_is_kept_when_present(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(tmp_path, inbounds=[{"label": "DE", "uri": "vless://external#Germany"}]),
+        {},
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://legacy-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
+    assert subscription.links == ["vless://external#Germany"]
+
+
+@pytest.mark.asyncio
+async def test_disabled_node_client_returns_no_links_and_no_error(tmp_path: Path) -> None:
+    # The panel simply returns [] for a disabled client; no node error is reported.
+    service = service_with_fakes(
+        prepare_store(tmp_path),
+        {(1, DEFAULT_EMAIL): []},  # panel returns no links (e.g. all inbounds disabled)
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == ["vless://external#External"]
+    assert subscription.node_errors == ()
+
+
+@pytest.mark.asyncio
+async def test_sub_id_resolves_client_and_fetches_links_by_canonical_email(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
+            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
+        ),
+        {(1, DEFAULT_EMAIL): [NODE_1_LINK_ONE]},
+    )
+
+    subscription = await service.build("personal-token")
+
+    assert subscription.links == [NODE_1_LINK_ONE]
+    assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
+
+
+@pytest.mark.asyncio
+async def test_legacy_client_id_request_resolves_client_with_separate_effective_sub_id(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
+            inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
+        ),
+        {(1, DEFAULT_EMAIL): [NODE_1_LINK_ONE]},
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [NODE_1_LINK_ONE]
     assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
 
 
 @pytest.mark.asyncio
 async def test_sub_id_is_canonical_and_legacy_sub_id_remains_allowed(tmp_path: Path) -> None:
-    service = SubscriptionService(
+    service = service_with_fakes(
         prepare_store(
             tmp_path,
-            clients=[
-                {
-                    "id": "123",
-                    "comment": "Migrated",
-                    "subId": "personal-token",
-                    "legacySubId": "123",
-                }
-            ],
+            clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
             inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
-        public_base_url="https://resetand.my.id:2096/sub",
-        node_client_factory=cast(
-            Any,
-            lambda node: FakeXuiClient(
-                node,
-                {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="legacy-sub", client_id="legacy-uuid")])},
-            ),
-        ),
+        {(1, DEFAULT_EMAIL): [NODE_1_LINK_ONE]},
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://legacy-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
+    assert subscription.links == [NODE_1_LINK_ONE]
     assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
 
 
@@ -385,7 +326,7 @@ async def test_sub_id_is_canonical_and_legacy_sub_id_remains_allowed(tmp_path: P
 async def test_sub_id_disables_legacy_ids_when_legacy_sub_id_is_absent(tmp_path: Path) -> None:
     service = service_with_fakes(
         prepare_store(tmp_path, clients=[{"id": "123", "comment": "New", "subId": "personal-token"}]),
-        default_node_inbounds(),
+        {(1, DEFAULT_EMAIL): [NODE_1_LINK_ONE]},
     )
 
     with pytest.raises(UnknownSubscriptionClientError):
@@ -404,21 +345,14 @@ async def test_partial_node_failure_keeps_available_links(tmp_path: Path) -> Non
             ],
         ),
         {
-            (1, 1): RuntimeError("node is down"),
-            (2, 2): xui_inbound(
-                2,
-                protocol="trojan",
-                clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
-            ),
+            (1, DEFAULT_EMAIL): RuntimeError("node is down"),
+            (2, DEFAULT_EMAIL): [NODE_2_LINK],
         },
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://external#External",
-        "trojan://node-two@node-2.example.test:443?type=tcp&security=none#Two",
-    ]
+    assert subscription.links == ["vless://external#External", NODE_2_LINK]
     assert subscription.node_errors
 
 
@@ -432,7 +366,7 @@ async def test_missing_node_client_is_ignored_without_breaking_external_links(tm
                 {"label": "External", "uri": "vless://external#External"},
             ],
         ),
-        {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="other", email=client_email("other"))])},
+        {(1, DEFAULT_EMAIL): []},  # panel returns [] → client not on this node
     )
 
     subscription = await service.build("123")
@@ -460,21 +394,14 @@ async def test_missing_node_client_falls_back_to_node_xui_fallback_client(tmp_pa
             inbounds=[{"tag": "node-one", "label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         {
-            (1, 1): xui_inbound(
-                1,
-                clients=[
-                    vless_client(sub_id="other", email=client_email("other"), client_id="other-uuid"),
-                    vless_client(sub_id="default", email="default@example.test", client_id="default-uuid"),
-                ],
-            )
+            (1, DEFAULT_EMAIL): [],  # primary email → no links
+            (1, "default@example.test"): [NODE_1_LINK_ONE],
         },
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://default-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
+    assert subscription.links == [NODE_1_LINK_ONE]
     assert subscription.node_errors == ()
 
 
@@ -504,30 +431,22 @@ async def test_inbound_xui_fallback_client_overrides_node_fallback_client(tmp_pa
             inbounds=[{"tag": "node-one", "label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         {
-            (1, 1): xui_inbound(
-                1,
-                clients=[
-                    vless_client(sub_id="node-default", email="node-default@example.test", client_id="node-default"),
-                    vless_client(
-                        sub_id="inbound-default",
-                        email="inbound-default@example.test",
-                        client_id="inbound-default",
-                    ),
-                ],
-            )
+            (1, DEFAULT_EMAIL): [],
+            (1, "node-default@example.test"): ["vless://node-default@..."],
+            (1, "inbound-default@example.test"): ["vless://inbound-default@node-1.example.test:443?type=tcp#One"],
         },
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://inbound-default@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
-    ]
+    assert subscription.links == ["vless://inbound-default@node-1.example.test:443?type=tcp#One"]
     assert subscription.node_errors == ()
 
 
 @pytest.mark.asyncio
 async def test_xui_fallback_client_uses_only_default_client_inbound_tags(tmp_path: Path) -> None:
+    # Client 123 has no inboundTags override — uses defaultClientInboundTags (only "allowed").
+    # Even though node has another inbound "blocked", it's not in defaultClientInboundTags.
     service = service_with_fakes(
         prepare_store(
             tmp_path,
@@ -548,26 +467,19 @@ async def test_xui_fallback_client_uses_only_default_client_inbound_tags(tmp_pat
             inbounds=[{"tag": "allowed", "label": "Allowed", "nodeId": 1, "xuiInboundId": 1}],
         ),
         {
-            (1, 1): xui_inbound(
-                1,
-                clients=[vless_client(sub_id="default", email="default@example.test", client_id="allowed-uuid")],
-            ),
-            (1, 2): xui_inbound(
-                2,
-                clients=[vless_client(sub_id="default", email="default@example.test", client_id="blocked-uuid")],
-            ),
+            (1, DEFAULT_EMAIL): [],
+            (1, "default@example.test"): ["vless://allowed-uuid@...#Allowed"],
         },
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://allowed-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#Allowed"
-    ]
+    assert subscription.links == ["vless://allowed-uuid@...#Allowed"]
 
 
 @pytest.mark.asyncio
 async def test_xui_fallback_client_uses_only_client_inbound_tags(tmp_path: Path) -> None:
+    # Client has explicit inboundTags = ["allowed"]; "blocked" tag is present in state but skipped.
     service = service_with_fakes(
         prepare_store(
             tmp_path,
@@ -592,22 +504,14 @@ async def test_xui_fallback_client_uses_only_client_inbound_tags(tmp_path: Path)
             ],
         ),
         {
-            (1, 1): xui_inbound(
-                1,
-                clients=[vless_client(sub_id="default", email="default@example.test", client_id="allowed-uuid")],
-            ),
-            (1, 2): xui_inbound(
-                2,
-                clients=[vless_client(sub_id="default", email="default@example.test", client_id="blocked-uuid")],
-            ),
+            (1, DEFAULT_EMAIL): [],
+            (1, "default@example.test"): ["vless://allowed-uuid@...#Allowed"],
         },
     )
 
     subscription = await service.build("123")
 
-    assert subscription.links == [
-        "vless://allowed-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#Allowed"
-    ]
+    assert subscription.links == ["vless://allowed-uuid@...#Allowed"]
 
 
 @pytest.mark.asyncio
@@ -623,16 +527,17 @@ async def test_renders_base64_text_response_with_metadata_headers(tmp_path: Path
             "routing": HAPP_ROUTING_RULES,
         },
     )
-    service = service_with_fakes(store, default_node_inbounds())
+    service = service_with_fakes(store, DEFAULT_NODE_LINKS)
 
     subscription = await service.build("123")
     response = render_subscription_response(subscription)
 
     decoded = base64.b64decode(response.body).decode("utf-8")
+    # Links are emitted in tag order: One, External, Two.
     assert decoded == (
-        "vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One\n"
+        f"{NODE_1_LINK_ONE}\n"
         "vless://external#External\n"
-        "trojan://node-two@node-1.example.test:443?type=tcp&security=none#Two\n"
+        f"{NODE_1_LINK_TWO}\n"
     )
     assert response.media_type == "text/plain; charset=utf-8"
     assert response.headers["content-disposition"] == 'attachment; filename="subscription.txt"'
@@ -652,56 +557,14 @@ async def test_renders_userinfo_with_aggregated_client_traffic(tmp_path: Path) -
         tmp_path,
         inbounds=[
             {"label": "One", "nodeId": 1, "xuiInboundId": 1},
-            {"label": "Two", "nodeId": 1, "xuiInboundId": 2},
         ],
         subscription={"subscriptionUserinfo": "upload=0; download=0; total=2147483648; expire=1710442799"},
     )
     service = service_with_fakes(
         store,
-        {
-            (1, 1): xui_inbound(
-                1,
-                clients=[vless_client(client_id="node-one")],
-                client_stats=[
-                    {
-                        "email": client_email("123"),
-                        "subId": "123",
-                        "up": 100,
-                        "down": 200,
-                        "total": 0,
-                        "expiryTime": 0,
-                    },
-                    {
-                        "email": client_email("other"),
-                        "subId": "other",
-                        "up": 999,
-                        "down": 999,
-                        "total": 0,
-                        "expiryTime": 0,
-                    },
-                ],
-            ),
-            (1, 2): xui_inbound(
-                2,
-                protocol="trojan",
-                clients=[
-                    {
-                        "password": "node-two",
-                        "email": client_email("123"),
-                        "subId": "123",
-                    }
-                ],
-                client_stats=[
-                    {
-                        "email": client_email("123"),
-                        "subId": "123",
-                        "up": 7,
-                        "down": 30,
-                        "total": 0,
-                        "expiryTime": 0,
-                    }
-                ],
-            ),
+        {(1, DEFAULT_EMAIL): [NODE_1_LINK_ONE]},
+        traffic_by_key={
+            (1, DEFAULT_EMAIL): {"up": 107, "down": 230, "total": 0, "expiryTime": 0},
         },
     )
 
@@ -712,31 +575,24 @@ async def test_renders_userinfo_with_aggregated_client_traffic(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_build_uses_list_inbounds_data_for_links_and_traffic(tmp_path: Path) -> None:
-    class ListOnlyXuiClient:
+async def test_build_maps_panel_links_to_allowed_inbounds_by_remark(tmp_path: Path) -> None:
+    """The panel returns all of a client's links keyed by inbound remark; build() uses
+    list_inbounds to map allowed inbounds -> remark -> link, and get_client_traffic for usage."""
+
+    class PanelClient:
         def __init__(self, node: NodeRecord) -> None:
             self.node = node
 
-        async def get_inbound(self, inbound_id: int) -> XuiInbound | None:
-            raise AssertionError("subscription build should not call get_inbound")
-
         async def list_inbounds(self) -> list[XuiInbound]:
             return [
-                xui_inbound(
-                    1,
-                    clients=[vless_client(client_id="node-one")],
-                    client_stats=[
-                        {
-                            "email": client_email("123"),
-                            "subId": "123",
-                            "up": 10,
-                            "down": 20,
-                            "total": 0,
-                            "expiryTime": 0,
-                        }
-                    ],
-                )
+                XuiInbound(id=1, protocol="", settings={}, stream_settings={}, sniffing={}, raw={"remark": "One"})
             ]
+
+        async def get_client_links(self, email: str) -> list[str]:
+            return [NODE_1_LINK_ONE]
+
+        async def get_client_traffic(self, email: str) -> JsonObject | None:
+            return {"up": 10, "down": 20, "total": 0, "expiryTime": 0}
 
         async def close(self) -> None:
             return None
@@ -747,19 +603,19 @@ async def test_build_uses_list_inbounds_data_for_links_and_traffic(tmp_path: Pat
             inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
         ),
         public_base_url="https://resetand.my.id:2096/sub/",
-        node_client_factory=cast(Any, ListOnlyXuiClient),
+        node_client_factory=cast(Any, PanelClient),
     )
 
     subscription = await service.build("123")
     response = render_subscription_response(subscription)
 
-    assert subscription.links == ["vless://node-one@node-1.example.test:443?type=tcp&encryption=none&security=none#One"]
+    assert subscription.links == [NODE_1_LINK_ONE]
     assert response.headers["subscription-userinfo"] == "upload=10; download=20; total=0"
 
 
 @pytest.mark.asyncio
 async def test_omits_userinfo_when_traffic_metadata_is_not_configured(tmp_path: Path) -> None:
-    service = service_with_fakes(prepare_store(tmp_path), default_node_inbounds())
+    service = service_with_fakes(prepare_store(tmp_path), DEFAULT_NODE_LINKS)
 
     subscription = await service.build("123")
     response = render_subscription_response(subscription)
@@ -771,7 +627,7 @@ async def test_omits_userinfo_when_traffic_metadata_is_not_configured(tmp_path: 
 async def test_routing_enable_can_disable_configured_happ_routing_rules(tmp_path: Path) -> None:
     service = service_with_fakes(
         prepare_store(tmp_path, subscription={"routingEnable": False, "routing": HAPP_ROUTING_RULES}),
-        default_node_inbounds(),
+        DEFAULT_NODE_LINKS,
     )
 
     subscription = await service.build("123")

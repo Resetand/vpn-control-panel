@@ -9,7 +9,7 @@ import pytest
 
 from vpn_control_plane.data import NodeRecord
 from vpn_control_plane.provisioning import client_email
-from vpn_control_plane.xui import XuiApiError, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
+from vpn_control_plane.xui import XuiApiError, XuiClientInfo, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
 
 
 def node(**overrides: object) -> NodeRecord:
@@ -252,23 +252,226 @@ async def test_server_backup_download_raises_on_http_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_client_treats_duplicate_email_as_idempotent_after_reread() -> None:
-    existing = {"email": client_email("123"), "id": "existing-uuid", "subId": "legacy-sub"}
-    responses: Iterator[httpx.Response] = iter(
-        [
-            json_response({"success": False, "msg": "Duplicate email"}),
-            json_response({"success": True, "obj": inbound_payload(clients=[dict(existing)])}),
-        ]
-    )
+async def test_get_client_returns_client_info_with_inbound_ids() -> None:
+    email = client_email("123")
+    client_obj = {"email": email, "uuid": "some-uuid", "subId": "abc", "flow": "xtls-rprx-vision"}
+    requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return next(responses)
+        requests.append(request)
+        return json_response({"success": True, "obj": {"client": client_obj, "inboundIds": [1, 3]}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        result = await XuiNodeClient(node(), http_client=http_client).add_client(1, {"email": client_email("123")})
+        info = await XuiNodeClient(node(), http_client=http_client).get_client(email)
 
-    assert result.created is False
-    assert result.client == existing
+    assert requests[0].url.path == f"/secret-panel/panel/api/clients/get/{email}"
+    assert isinstance(info, XuiClientInfo)
+    assert info.client["uuid"] == "some-uuid"
+    assert info.inbound_ids == [1, 3]
+
+
+@pytest.mark.asyncio
+async def test_get_client_returns_none_when_not_found() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        info = await XuiNodeClient(node(), http_client=http_client).get_client("missing@example.test")
+
+    assert info is None
+
+
+@pytest.mark.asyncio
+async def test_add_client_posts_json_payload_with_inbound_ids() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True, "msg": "ok"})
+
+    client_payload = {"email": client_email("123"), "flow": "xtls-rprx-vision", "subId": "abc"}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).add_client(client_payload, [1, 2])
+
+    assert requests[0].url.path == "/secret-panel/panel/api/clients/add"
+    assert requests[0].method == "POST"
+    body = json.loads(requests[0].content)
+    assert body == {"client": client_payload, "inboundIds": [1, 2]}
+
+
+@pytest.mark.asyncio
+async def test_add_client_raises_on_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"success": False, "msg": "email already in use"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(XuiApiError, match="email already in use"):
+            await XuiNodeClient(node(), http_client=http_client).add_client({"email": "x"}, [1])
+
+
+@pytest.mark.asyncio
+async def test_attach_client_posts_inbound_ids_to_email_route() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).attach_client("alice", [3, 4])
+
+    assert requests[0].url.path == "/secret-panel/panel/api/clients/alice/attach"
+    assert requests[0].method == "POST"
+    assert json.loads(requests[0].content) == {"inboundIds": [3, 4]}
+
+
+@pytest.mark.asyncio
+async def test_list_clients_parses_flat_rows_stripping_inbound_ids_and_traffic() -> None:
+    rows = [
+        {
+            "email": client_email("123"),
+            "subId": "abc",
+            "comment": "Alice",
+            "tgId": 123,
+            "inboundIds": [1, 3],
+            "traffic": {"up": 10, "down": 20},
+        },
+        {"missing-email": True},
+        "not-a-dict",
+    ]
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True, "obj": rows})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        clients = await XuiNodeClient(node(), http_client=http_client).list_clients()
+
+    assert requests[0].url.path == "/secret-panel/panel/api/clients/list"
+    assert len(clients) == 1
+    assert clients[0].inbound_ids == [1, 3]
+    assert clients[0].client == {"email": client_email("123"), "subId": "abc", "comment": "Alice", "tgId": 123}
+
+
+@pytest.mark.asyncio
+async def test_list_clients_raises_on_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"success": False, "msg": "list failed"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(XuiApiError, match="list failed"):
+            await XuiNodeClient(node(), http_client=http_client).list_clients()
+
+
+@pytest.mark.asyncio
+async def test_update_client_posts_raw_client_body_to_email_route() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True})
+
+    email = client_email("123")
+    client_payload = {"email": email, "subId": "new", "comment": "Updated", "tgId": 123}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).update_client(email, client_payload)
+
+    assert requests[0].url.path == f"/secret-panel/panel/api/clients/update/{email}"
+    assert requests[0].method == "POST"
+    assert json.loads(requests[0].content) == client_payload
+
+
+@pytest.mark.asyncio
+async def test_update_client_maps_uuid_to_id_and_drops_read_only_fields() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True})
+
+    # A row as returned by list/get: numeric primary-key id, the real secret in uuid,
+    # plus denormalized inboundIds/traffic the update endpoint must not receive.
+    row = {
+        "id": 4,
+        "email": client_email("123"),
+        "uuid": "d92334e7-7f6a-4bd0-b46c-dcdf46b3cffa",
+        "subId": "abc",
+        "comment": "Alice",
+        "tgId": 123,
+        "inboundIds": [1, 5],
+        "traffic": {"up": 1, "down": 2},
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        await XuiNodeClient(node(), http_client=http_client).update_client(client_email("123"), row)
+
+    body = json.loads(requests[0].content)
+    assert body["id"] == "d92334e7-7f6a-4bd0-b46c-dcdf46b3cffa"
+    assert "inboundIds" not in body and "traffic" not in body
+    assert body["subId"] == "abc" and body["comment"] == "Alice" and body["tgId"] == 123
+
+
+@pytest.mark.asyncio
+async def test_update_client_raises_on_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"success": False, "msg": "update rejected"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(XuiApiError, match="update rejected"):
+            await XuiNodeClient(node(), http_client=http_client).update_client("alice", {"email": "alice"})
+
+
+@pytest.mark.asyncio
+async def test_get_client_links_returns_link_list() -> None:
+    email = client_email("123")
+    links = ["vless://uuid@host:443?type=tcp#Remark", "trojan://pwd@host:443?type=tcp#Two"]
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True, "obj": links})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        result = await XuiNodeClient(node(), http_client=http_client).get_client_links(email)
+
+    assert requests[0].url.path == f"/secret-panel/panel/api/clients/links/{email}"
+    assert result == links
+
+
+@pytest.mark.asyncio
+async def test_get_client_links_returns_empty_list_when_not_found() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        result = await XuiNodeClient(node(), http_client=http_client).get_client_links("ghost")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_client_traffic_returns_traffic_object() -> None:
+    email = client_email("123")
+    traffic = {"email": email, "up": 1000, "down": 2000, "total": 0, "expiryTime": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"success": True, "obj": traffic})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        result = await XuiNodeClient(node(), http_client=http_client).get_client_traffic(email)
+
+    assert result == traffic
+
+
+@pytest.mark.asyncio
+async def test_get_client_traffic_returns_none_when_not_found() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        result = await XuiNodeClient(node(), http_client=http_client).get_client_traffic("ghost")
+
+    assert result is None
 
 
 @pytest.mark.asyncio
