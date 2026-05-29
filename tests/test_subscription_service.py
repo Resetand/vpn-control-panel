@@ -16,6 +16,7 @@ from vpn_control_plane.app import create_app
 from vpn_control_plane.config import Settings, build_public_subscription_base_url, normalize_subscription_route
 from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.http.routes import create_router
+from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.subscription import (
     SubscriptionService,
     UnknownSubscriptionClientError,
@@ -177,7 +178,12 @@ def xui_inbound(
     )
 
 
-def vless_client(*, sub_id: str = "123", email: str = "1_123", client_id: str = "client-uuid") -> JsonObject:
+def vless_client(
+    *,
+    sub_id: str = "123",
+    email: str = client_email("123"),
+    client_id: str = "client-uuid",
+) -> JsonObject:
     return {"id": client_id, "email": email, "subId": sub_id, "flow": ""}
 
 
@@ -187,7 +193,7 @@ def default_node_inbounds() -> dict[tuple[int, int], XuiInbound]:
         (1, 2): xui_inbound(
             2,
             protocol="trojan",
-            clients=[{"password": "node-two", "email": "2_123", "subId": "123"}],
+            clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
         ),
     }
 
@@ -235,7 +241,7 @@ async def test_builds_node_and_external_links_in_inbounds_file_order(tmp_path: P
             (1, 2): xui_inbound(
                 2,
                 protocol="trojan",
-                clients=[{"password": "node-two", "email": "2_123", "subId": "123"}],
+                clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
             ),
         },
     )
@@ -258,7 +264,7 @@ async def test_disabled_node_inbound_is_ignored_without_node_error(tmp_path: Pat
             (1, 2): xui_inbound(
                 2,
                 protocol="trojan",
-                clients=[{"password": "node-two", "email": "2_123", "subId": "123"}],
+                clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
                 enable=False,
             ),
         },
@@ -402,7 +408,7 @@ async def test_partial_node_failure_keeps_available_links(tmp_path: Path) -> Non
             (2, 2): xui_inbound(
                 2,
                 protocol="trojan",
-                clients=[{"password": "node-two", "email": "2_123", "subId": "123"}],
+                clients=[{"password": "node-two", "email": client_email("123"), "subId": "123"}],
             ),
         },
     )
@@ -426,7 +432,7 @@ async def test_missing_node_client_is_ignored_without_breaking_external_links(tm
                 {"label": "External", "uri": "vless://external#External"},
             ],
         ),
-        {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="other", email="1_other")])},
+        {(1, 1): xui_inbound(1, clients=[vless_client(sub_id="other", email=client_email("other"))])},
     )
 
     subscription = await service.build("123")
@@ -488,15 +494,44 @@ async def test_renders_userinfo_with_aggregated_client_traffic(tmp_path: Path) -
                 1,
                 clients=[vless_client(client_id="node-one")],
                 client_stats=[
-                    {"email": "1_123", "subId": "123", "up": 100, "down": 200, "total": 0, "expiryTime": 0},
-                    {"email": "1_other", "subId": "other", "up": 999, "down": 999, "total": 0, "expiryTime": 0},
+                    {
+                        "email": client_email("123"),
+                        "subId": "123",
+                        "up": 100,
+                        "down": 200,
+                        "total": 0,
+                        "expiryTime": 0,
+                    },
+                    {
+                        "email": client_email("other"),
+                        "subId": "other",
+                        "up": 999,
+                        "down": 999,
+                        "total": 0,
+                        "expiryTime": 0,
+                    },
                 ],
             ),
             (1, 2): xui_inbound(
                 2,
                 protocol="trojan",
-                clients=[{"password": "node-two", "email": "2_123", "subId": "123"}],
-                client_stats=[{"email": "2_123", "subId": "123", "up": 7, "down": 30, "total": 0, "expiryTime": 0}],
+                clients=[
+                    {
+                        "password": "node-two",
+                        "email": client_email("123"),
+                        "subId": "123",
+                    }
+                ],
+                client_stats=[
+                    {
+                        "email": client_email("123"),
+                        "subId": "123",
+                        "up": 7,
+                        "down": 30,
+                        "total": 0,
+                        "expiryTime": 0,
+                    }
+                ],
             ),
         },
     )
@@ -522,7 +557,14 @@ async def test_build_uses_list_inbounds_data_for_links_and_traffic(tmp_path: Pat
                     1,
                     clients=[vless_client(client_id="node-one")],
                     client_stats=[
-                        {"email": "1_123", "subId": "123", "up": 10, "down": 20, "total": 0, "expiryTime": 0}
+                        {
+                            "email": client_email("123"),
+                            "subId": "123",
+                            "up": 10,
+                            "down": 20,
+                            "total": 0,
+                            "expiryTime": 0,
+                        }
                     ],
                 )
             ]

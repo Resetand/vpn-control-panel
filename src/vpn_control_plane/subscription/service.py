@@ -23,6 +23,7 @@ from vpn_control_plane.data import (
     build_inbound_catalog,
     effective_inbound_tags,
 )
+from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.xui import XuiInbound, XuiNodeClient, build_xui_share_links
 
 
@@ -168,7 +169,7 @@ class SubscriptionService:
         try:
             if xui_inbound is None:
                 raise SubscriptionError(f"inbound {inbound.xui_inbound_id} was not found")
-            _add_client_traffic(traffic, xui_inbound, inbound, client)
+            _add_client_traffic(traffic, xui_inbound, client)
             if not _xui_inbound_is_enabled(xui_inbound.raw.get("enable", True)):
                 return []
             links = build_xui_share_links(
@@ -176,7 +177,7 @@ class SubscriptionService:
                 fallback_address=node.host,
                 sub_id=client.effective_sub_id,
                 client_email=None,
-                fallback_email=f"{inbound.xui_inbound_id}_{client.id}",
+                fallback_email=client_email(client.id),
                 remark=inbound.label,
             )
             if not links:
@@ -396,7 +397,6 @@ def _parse_subscription_userinfo(value: str | None) -> dict[str, str]:
 def _add_client_traffic(
     traffic: SubscriptionTraffic,
     xui_inbound: object,
-    inbound: NodeInboundRecord,
     client: ClientRecord,
 ) -> None:
     raw = getattr(xui_inbound, "raw", {})
@@ -404,7 +404,7 @@ def _add_client_traffic(
     if not isinstance(stats, list):
         return
 
-    fallback_email = f"{inbound.xui_inbound_id}_{client.id}"
+    fallback_email = client_email(client.id)
     for stat in stats:
         if _traffic_stat_matches_client(
             stat,

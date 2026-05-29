@@ -35,8 +35,8 @@ class ProvisioningResult:
     reused: int
 
 
-def legacy_client_email(inbound_id: int, client_id: str) -> str:
-    return f"{inbound_id}_{client_id}"
+def client_email(client_id: str) -> str:
+    return f"{client_id}"
 
 
 def telegram_client_id(telegram_user_id: int | str) -> str:
@@ -144,7 +144,7 @@ class ProvisioningService:
                 inbound_cache[(node.id, meta_inbound.xui_inbound_id)] = inbound
                 existing_client = find_client_by_email(
                     inbound,
-                    legacy_client_email(meta_inbound.xui_inbound_id, client_id),
+                    client_email(client_id),
                 )
                 if existing_client is not None:
                     existing_by_inbound[(node.id, meta_inbound.xui_inbound_id)] = existing_client
@@ -209,7 +209,7 @@ class ProvisioningService:
         telegram_id: int | None = None,
     ) -> JsonObject:
         payload: JsonObject = {
-            "email": legacy_client_email(inbound.id, client_id),
+            "email": client_email(client_id),
             "limitIp": 0,
             "totalGB": 0,
             "expiryTime": 0,

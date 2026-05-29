@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from vpn_control_plane.data import ControlPlaneStore, NodeRecord
-from vpn_control_plane.provisioning import ProvisioningService, legacy_client_email, telegram_client_id
+from vpn_control_plane.provisioning import ProvisioningService, client_email, telegram_client_id
 from vpn_control_plane.xui import XuiAddClientResult, XuiInbound
 
 JsonObject = dict[str, Any]
@@ -138,7 +138,7 @@ def service_with_fakes(
 @pytest.mark.asyncio
 async def test_selects_control_plane_ids_and_legacy_email() -> None:
     assert telegram_client_id(123456789) == "123456789"
-    assert legacy_client_email(1, "123456789") == "1_123456789"
+    assert client_email("123456789") == "123456789"
 
 
 @pytest.mark.asyncio
@@ -151,11 +151,11 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
     assert result.client.id == "123"
     assert result.client.effective_sub_id == SUBSCRIPTION_ID
     assert result.created == 2
-    assert clients[1].added[0][1]["email"] == "1_123"
+    assert clients[1].added[0][1]["email"] == client_email("123")
     assert clients[1].added[0][1]["subId"] == SUBSCRIPTION_ID
     assert clients[1].added[0][1]["tgId"] == 123
     assert clients[1].added[0][1]["flow"] == "xtls-rprx-vision"
-    assert clients[2].added[0][1]["email"] == "2_123"
+    assert clients[2].added[0][1]["email"] == client_email("123")
     saved = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
     assert saved["clients"] == [
         {
@@ -169,8 +169,8 @@ async def test_new_client_provisioning_creates_all_node_inbounds_and_persists_re
 @pytest.mark.asyncio
 async def test_returning_client_does_not_create_or_overwrite_existing_key_material(tmp_path: Path) -> None:
     store = prepare_store(tmp_path, clients=[{"id": "123", "comment": "Existing"}])
-    existing_one = {"email": "1_123", "id": "keep-uuid", "subId": "legacy-sub", "flow": "xtls-rprx-vision"}
-    existing_two = {"email": "2_123", "password": "keep-password", "subId": "legacy-sub"}
+    existing_one = {"email": client_email("123"), "id": "keep-uuid", "subId": "legacy-sub", "flow": "xtls-rprx-vision"}
+    existing_two = {"email": client_email("123"), "password": "keep-password", "subId": "legacy-sub"}
     service, clients = service_with_fakes(
         store,
         {1: [inbound(1, "vless", [existing_one])], 2: [inbound(2, "trojan", [existing_two])]},
@@ -201,7 +201,7 @@ async def test_partial_provisioning_creates_only_missing_inbounds_with_existing_
     service, clients = service_with_fakes(
         store,
         {
-            1: [inbound(1, "vless", [{"email": "1_123", "id": "keep", "subId": "legacy-sub"}])],
+            1: [inbound(1, "vless", [{"email": "123", "id": "keep", "subId": "legacy-sub"}])],
             2: [inbound(2, "trojan")],
         },
     )
@@ -210,7 +210,7 @@ async def test_partial_provisioning_creates_only_missing_inbounds_with_existing_
 
     assert result.created == 1
     assert clients[1].added == []
-    assert clients[2].added[0][1]["email"] == "2_123"
+    assert clients[2].added[0][1]["email"] == client_email("123")
     assert clients[2].added[0][1]["subId"] == SUBSCRIPTION_ID
     assert clients[2].added[0][1]["password"] == "11111111-1111-1111-1111-111111111111"
 
@@ -248,7 +248,7 @@ async def test_existing_client_explicit_inbound_tags_define_provisioning_scope(t
 
     assert result.created == 1
     assert 1 not in clients
-    assert clients[2].added[0][1]["email"] == "2_123"
+    assert clients[2].added[0][1]["email"] == client_email("123")
     assert result.client.inbound_tags == ["personal"]
 
 

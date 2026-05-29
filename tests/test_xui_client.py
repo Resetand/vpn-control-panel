@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from vpn_control_plane.data import NodeRecord
+from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.xui import XuiApiError, XuiNodeClient, XuiNodeEndpoint, decode_subscription_lines
 
 
@@ -100,13 +101,13 @@ async def test_list_inbounds_logs_in_and_parses_json_string_fields() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
-        return json_response({"success": True, "obj": [inbound_payload(clients=[{"email": "1_123"}])]})
+        return json_response({"success": True, "obj": [inbound_payload(clients=[{"email": "123"}])]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         inbounds = await XuiNodeClient(node(), http_client=http_client).list_inbounds()
 
     assert paths == ["/secret-panel/panel/api/inbounds/list"]
-    assert inbounds[0].settings == {"clients": [{"email": "1_123"}]}
+    assert inbounds[0].settings == {"clients": [{"email": client_email("123")}]}
     assert inbounds[0].stream_settings == {"network": "tcp"}
 
 
@@ -252,7 +253,7 @@ async def test_server_backup_download_raises_on_http_error() -> None:
 
 @pytest.mark.asyncio
 async def test_add_client_treats_duplicate_email_as_idempotent_after_reread() -> None:
-    existing = {"email": "1_123", "id": "existing-uuid", "subId": "legacy-sub"}
+    existing = {"email": client_email("123"), "id": "existing-uuid", "subId": "legacy-sub"}
     responses: Iterator[httpx.Response] = iter(
         [
             json_response({"success": False, "msg": "Duplicate email"}),
@@ -264,7 +265,7 @@ async def test_add_client_treats_duplicate_email_as_idempotent_after_reread() ->
         return next(responses)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-        result = await XuiNodeClient(node(), http_client=http_client).add_client(1, {"email": "1_123"})
+        result = await XuiNodeClient(node(), http_client=http_client).add_client(1, {"email": client_email("123")})
 
     assert result.created is False
     assert result.client == existing
