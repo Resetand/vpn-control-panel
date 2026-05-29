@@ -14,11 +14,19 @@ class NodeInboundRecord(StateModel):
     tag: Annotated[str, Field(min_length=1)]
     label: Annotated[str, Field(min_length=1)]
     xui_inbound_id: Annotated[int, Field(ge=1)] = Field(alias="xuiInboundId")
+    xui_fallback_client_email: str | None = Field(default=None, alias="xuiFallbackClientEmail")
 
     @field_validator("tag")
     @classmethod
     def strip_tag(cls, value: str) -> str:
         return _strip_nonempty(value, "inbound tag")
+
+    @field_validator("xui_fallback_client_email")
+    @classmethod
+    def strip_xui_fallback_client_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _strip_nonempty(value, "xui fallback client email")
 
 
 class NodeRecord(StateModel):
@@ -30,6 +38,7 @@ class NodeRecord(StateModel):
     scheme: Literal["http", "https"] = "https"
     label: str | None = None
     monitoring: bool = True
+    xui_fallback_client_email: str | None = Field(default=None, alias="xuiFallbackClientEmail")
     inbounds: list[NodeInboundRecord] = Field(default_factory=list)
 
     @field_validator("base_path")
@@ -46,6 +55,13 @@ class NodeRecord(StateModel):
     @classmethod
     def normalize_api_token(cls, value: str) -> str:
         return _strip_nonempty(value, "api token")
+
+    @field_validator("xui_fallback_client_email")
+    @classmethod
+    def strip_xui_fallback_client_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _strip_nonempty(value, "xui fallback client email")
 
 
 class ExternalInboundRecord(StateModel):

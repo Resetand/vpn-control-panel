@@ -90,8 +90,13 @@ If your JSON data uses `${{ env.VAR_NAME }}` templates, define those variables i
       "port": 2053,
       "basePath": "/panel/",
       "apiToken": "${{ env.EU_3X_UI_NODE_API_TOKEN }}",
+      "xuiFallbackClientEmail": "default-client-email",
       "inbounds": [
-        {"tag": "eu-default", "label": "EU", "xuiInboundId": 1}
+        {
+          "tag": "eu-default",
+          "label": "EU",
+          "xuiInboundId": 1,
+        }
       ]
     }
   ],
@@ -103,6 +108,8 @@ If your JSON data uses `${{ env.VAR_NAME }}` templates, define those variables i
   }
 }
 ```
+
+When a subscription client is missing from an XUI inbound, `xuiFallbackClientEmail` can point it to a shared fallback client. Configure it on a node to apply to all node inbounds, or on a specific inbound to override the node value. If neither value is set, no configured fallback is used.
 
 The app sends `Authorization: Bearer <token>` to `/panel/api/*` for every node request. Missing environment variables in JSON templates fail during startup, so token configuration errors are visible before the first API call.
 

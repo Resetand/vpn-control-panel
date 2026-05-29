@@ -29,7 +29,15 @@ def valid_state() -> dict[str, object]:
                 "port": 2053,
                 "basePath": "panel",
                 "apiToken": "${{ env.EU_API_TOKEN }}",
-                "inbounds": [{"tag": "eu", "label": "EU", "xuiInboundId": 1}],
+                "xuiFallbackClientEmail": "node-fallback@example.test",
+                "inbounds": [
+                    {
+                        "tag": "eu",
+                        "label": "EU",
+                        "xuiInboundId": 1,
+                        "xuiFallbackClientEmail": "inbound-fallback@example.test",
+                    }
+                ],
             }
         ],
         "externalInbounds": [{"tag": "extra", "label": "Extra", "uri": "vless://example#Extra"}],
@@ -54,7 +62,9 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: py
 
     assert state.nodes[0].base_path == "/panel/"
     assert state.nodes[0].api_token == "eu-token"
+    assert state.nodes[0].xui_fallback_client_email == "node-fallback@example.test"
     assert state.nodes[0].inbounds[0].xui_inbound_id == 1
+    assert state.nodes[0].inbounds[0].xui_fallback_client_email == "inbound-fallback@example.test"
     assert state.external_inbounds[0].tag == "extra"
     assert state.clients[0].effective_sub_id == "personal-token"
     assert state.clients[0].legacy_subscription_ids == {"123456789"}

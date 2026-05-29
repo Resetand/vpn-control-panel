@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -17,8 +17,14 @@ def build_xui_share_links(
     remark: str,
     client_email: str | None = None,
     fallback_email: str | None = None,
+    fallback_emails: Sequence[str] = (),
 ) -> list[str]:
-    client = _find_client(inbound, sub_id=sub_id, client_email=client_email, fallback_email=fallback_email)
+    client = _find_client(
+        inbound,
+        sub_id=sub_id,
+        client_email=client_email,
+        fallback_emails=[email for email in (fallback_email, *fallback_emails) if email],
+    )
     if client is None:
         return []
 
@@ -264,7 +270,7 @@ def _find_client(
     *,
     sub_id: str,
     client_email: str | None,
-    fallback_email: str | None,
+    fallback_emails: Sequence[str],
 ) -> JsonObject | None:
     clients = inbound.settings.get("clients", [])
     if not isinstance(clients, list):
@@ -275,8 +281,10 @@ def _find_client(
     for client in dict_clients:
         if _client_is_enabled(client) and _text(client.get("subId")) == sub_id:
             return client
-    if fallback_email:
-        return _find_client_by_email(dict_clients, fallback_email)
+    for fallback_email in fallback_emails:
+        fallback_client = _find_client_by_email(dict_clients, fallback_email)
+        if fallback_client is not None:
+            return fallback_client
     return None
 
 

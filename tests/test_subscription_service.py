@@ -442,6 +442,91 @@ async def test_missing_node_client_is_ignored_without_breaking_external_links(tm
 
 
 @pytest.mark.asyncio
+async def test_missing_node_client_falls_back_to_node_xui_fallback_client(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            nodes=[
+                {
+                    "id": 1,
+                    "host": "node-1.example.test",
+                    "port": 443,
+                    "basePath": "/panel/",
+                    "apiToken": "token-1",
+                    "xuiFallbackClientEmail": "default@example.test",
+                    "inbounds": [{"tag": "node-one", "label": "One", "xuiInboundId": 1}],
+                }
+            ],
+            inbounds=[{"tag": "node-one", "label": "One", "nodeId": 1, "xuiInboundId": 1}],
+        ),
+        {
+            (1, 1): xui_inbound(
+                1,
+                clients=[
+                    vless_client(sub_id="other", email=client_email("other"), client_id="other-uuid"),
+                    vless_client(sub_id="default", email="default@example.test", client_id="default-uuid"),
+                ],
+            )
+        },
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://default-uuid@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
+    ]
+    assert subscription.node_errors == ()
+
+
+@pytest.mark.asyncio
+async def test_inbound_xui_fallback_client_overrides_node_fallback_client(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            nodes=[
+                {
+                    "id": 1,
+                    "host": "node-1.example.test",
+                    "port": 443,
+                    "basePath": "/panel/",
+                    "apiToken": "token-1",
+                    "xuiFallbackClientEmail": "node-default@example.test",
+                    "inbounds": [
+                        {
+                            "tag": "node-one",
+                            "label": "One",
+                            "xuiInboundId": 1,
+                            "xuiFallbackClientEmail": "inbound-default@example.test",
+                        }
+                    ],
+                }
+            ],
+            inbounds=[{"tag": "node-one", "label": "One", "nodeId": 1, "xuiInboundId": 1}],
+        ),
+        {
+            (1, 1): xui_inbound(
+                1,
+                clients=[
+                    vless_client(sub_id="node-default", email="node-default@example.test", client_id="node-default"),
+                    vless_client(
+                        sub_id="inbound-default",
+                        email="inbound-default@example.test",
+                        client_id="inbound-default",
+                    ),
+                ],
+            )
+        },
+    )
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [
+        "vless://inbound-default@node-1.example.test:443?type=tcp&encryption=none&security=none#One"
+    ]
+    assert subscription.node_errors == ()
+
+
+@pytest.mark.asyncio
 async def test_renders_base64_text_response_with_metadata_headers(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,

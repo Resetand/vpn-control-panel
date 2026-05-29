@@ -178,6 +178,7 @@ class SubscriptionService:
                 sub_id=client.effective_sub_id,
                 client_email=None,
                 fallback_email=client_email(client.id),
+                fallback_emails=_fallback_client_emails(node, inbound),
                 remark=inbound.label,
             )
             if not links:
@@ -196,6 +197,13 @@ class SubscriptionService:
             if requested_sub_id in client.legacy_subscription_ids:
                 return client
         return None
+
+
+def _fallback_client_emails(node: NodeRecord, inbound: NodeInboundRecord) -> tuple[str, ...]:
+    email = inbound.xui_fallback_client_email or node.xui_fallback_client_email
+    if email is None:
+        return ()
+    return (email,)
 
 
 def render_subscription_response(subscription: BuiltSubscription) -> Response:
