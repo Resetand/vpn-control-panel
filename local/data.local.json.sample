@@ -1,0 +1,42 @@
+{
+  "nodes": [
+    {
+      "id": 1,
+      "host": "eu1",
+      "port": 13621,
+      "basePath": "/change-me-panel-path/",
+      "apiToken": "change-me-api-token-eu1",
+      "scheme": "http",
+      "monitoring": false,
+      "xuiFallbackClientEmail": "default",
+      "inbounds": [
+        {
+          "tag": "eu1-default",
+          "label": "EU Node",
+          "xuiInboundId": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "host": "msk1",
+      "port": 58788,
+      "basePath": "/change-me-panel-path/",
+      "apiToken": "change-me-api-token-msk1",
+      "scheme": "http",
+      "monitoring": false,
+      "xuiFallbackClientEmail": "default",
+      "inbounds": [
+        {
+          "tag": "msk1-default",
+          "label": "MSK Node",
+          "xuiInboundId": 1
+        }
+      ]
+    }
+  ],
+  "externalInbounds": [],
+  "clients": [],
+  "defaultClientInboundTags": ["eu1-default", "msk1-default"],
+  "subscription": {}
+}

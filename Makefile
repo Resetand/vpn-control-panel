@@ -1,4 +1,5 @@
-.PHONY: init init-data restore-data backup-data backup-secrets sync up run down stop logs ps build test lint format typecheck clean
+.PHONY: init init-data restore-data backup-data backup-secrets sync up run down stop logs ps build test lint format typecheck clean \
+        init-local run-local stop-local logs-local
 
 COMPOSE ?= docker compose
 ENV_FILE ?= .env
@@ -69,3 +70,44 @@ typecheck:
 clean:
 	$(COMPOSE) down --remove-orphans
 	rm -rf .pytest_cache .ruff_cache .mypy_cache htmlcov .coverage dist build *.egg-info
+
+# ── Local dev stack ───────────────────────────────────────────────────────────
+LOCAL_COMPOSE_FILE := local/docker-compose.local.yml
+LOCAL_ENV_FILE := .env.local
+LOCAL_DATA_FILE := ./data.local.json
+INIT_ARGS ?=
+
+# First-time setup: create config files from samples, then initialize node DBs.
+# Use INIT_ARGS=--restore to populate node DBs from backup files instead of
+# starting fresh (set XUI_<HOST_UPPER>_BACKUP_DB paths in .env.local first).
+init-local: $(LOCAL_ENV_FILE) $(LOCAL_DATA_FILE)
+	python3 local/init-nodes.py $(INIT_ARGS)
+
+$(LOCAL_ENV_FILE):
+	cp local/.env.local.sample $(LOCAL_ENV_FILE)
+	@echo ""
+	@echo "Created $(LOCAL_ENV_FILE) — fill in VPN_TELEGRAM_BOT_TOKEN and VPN_TELEGRAM_ADMIN_IDS before continuing."
+	@echo ""
+
+$(LOCAL_DATA_FILE):
+	cp local/data.local.json.sample $(LOCAL_DATA_FILE)
+	@echo ""
+	@echo "Created $(LOCAL_DATA_FILE) — fill in basePath and apiToken for each node before continuing."
+	@echo ""
+
+# Start / restart the local stack (nodes + control plane).
+# Patches node DBs with the current apiToken on every run (idempotent).
+# Requires .env.local and data.local.json — run `make init-local` first.
+run-local:
+	@test -f $(LOCAL_ENV_FILE)  || (echo "$(LOCAL_ENV_FILE) not found — run: make init-local" && exit 1)
+	@test -f $(LOCAL_DATA_FILE) || (echo "$(LOCAL_DATA_FILE) not found — run: make init-local" && exit 1)
+	python3 local/init-nodes.py --patch-only
+	$(COMPOSE) -f $(LOCAL_COMPOSE_FILE) --env-file $(LOCAL_ENV_FILE) up -d --build
+
+# Stop the local stack.
+stop-local:
+	$(COMPOSE) -f $(LOCAL_COMPOSE_FILE) down
+
+# Follow logs from all local services. Filter with: make logs-local SVC=app
+logs-local:
+	$(COMPOSE) -f $(LOCAL_COMPOSE_FILE) logs -f -t $(SVC)

@@ -47,6 +47,24 @@ make format      # ruff format
 make typecheck   # mypy
 ```
 
+**Local stack** — real 3x-ui nodes + control plane in Docker, driven by `data.local.json`:
+
+```
+make init-local                      # first time: init node DBs (bootstrap or seed from backup.db)
+make init-local INIT_ARGS=--restore  # re-seed from local/nodes/<host>/db/backup.db
+make run-local                       # start / restart everything
+make stop-local                      # stop everything
+make logs-local [SVC=app]            # follow logs
+```
+
+- `data.local.json` and `.env.local` are the config sources;
+- `Node DBs/certs` live in `local/nodes/<host>/{db,certs}/`
+- `local/docker-compose.local.yml` is generated automatically
+
+## 3x-ui API
+
+`openapi.3x-ui-3.2.0.json` — OpenAPI spec for the 3x-ui panel API (version 3.2.0). Use it as the reference when reading or modifying `src/vpn_control_plane/xui/`.
+
 ## Core domain concepts
 
 **Nodes and inbounds.** A *node* is a 3x-ui panel instance. Each node has one or more *inbounds* — VPN entry points (e.g., VLESS over TCP). Every inbound — whether on a node or a static external URI — has a unique short *tag*. Tags are the routing unit for both provisioning and subscription delivery.

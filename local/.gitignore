@@ -1,0 +1,3 @@
+# Ignore per-node secrets for any local stacs censitive data
+nodes
+docker-compose.local.yml

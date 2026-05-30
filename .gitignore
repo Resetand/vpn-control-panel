@@ -26,3 +26,7 @@ backups/
 
 # Ignore openspec design and task files
 /openspec
+
+# Local stack secrets and generated files
+.env.local
+data.local.json
