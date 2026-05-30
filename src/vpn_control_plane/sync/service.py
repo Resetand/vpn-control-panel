@@ -134,9 +134,7 @@ class ClientSyncService:
     ) -> None:
         missing_inbounds = [inbound_id for inbound_id in target_ids if inbound_id not in inbounds_by_id]
         if missing_inbounds:
-            report.node_errors.append(
-                f"node {node.id}: inbound(s) {missing_inbounds} for client {record.id} not found"
-            )
+            report.node_errors.append(f"node {node.id}: inbound(s) {missing_inbounds} for client {record.id} not found")
             return
 
         email = client_email(record.id)

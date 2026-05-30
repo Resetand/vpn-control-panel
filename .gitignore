@@ -1,6 +1,6 @@
 /tmp
-/data
 data.json
+/.claude
 
 # Python
 __pycache__/

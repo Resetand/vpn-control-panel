@@ -140,9 +140,7 @@ def service_with_fakes(
     def factory(node: NodeRecord) -> FakeXuiClient:
         client = fake_clients.get(node.id)
         if client is None:
-            client = FakeXuiClient(
-                node, inbounds_by_node[node.id], initial_clients_by_node.get(node.id)
-            )
+            client = FakeXuiClient(node, inbounds_by_node[node.id], initial_clients_by_node.get(node.id))
             fake_clients[node.id] = client
         return client
 
@@ -339,10 +337,12 @@ async def test_vless_flow_empty_when_mixed_tcp_and_non_tcp_vless_on_same_node(tm
     store = prepare_store(tmp_path)
     service = ProvisioningService(store, default_vless_flow="custom-flow")
 
-    mixed_flow = service._compute_node_flow([
-        inbound(1, "vless", network="tcp"),
-        inbound(2, "vless", network="ws"),
-    ])
+    mixed_flow = service._compute_node_flow(
+        [
+            inbound(1, "vless", network="tcp"),
+            inbound(2, "vless", network="ws"),
+        ]
+    )
     assert mixed_flow == ""
 
 

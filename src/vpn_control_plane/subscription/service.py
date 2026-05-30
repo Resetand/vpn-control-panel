@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from importlib.resources import files
 from io import BytesIO
 from typing import Any, cast
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import qrcode  # type: ignore[import-untyped]
 from fastapi import Response
@@ -114,7 +114,11 @@ class SubscriptionService:
                 if isinstance(catalog_inbound, ExternalCatalogInbound):
                     external_inbound = catalog_inbound.inbound
                     if external_inbound.uri.strip():
-                        links.append(_ensure_fragment_label(external_inbound.uri.strip(), external_inbound.label))
+                        links.append(
+                            _normalize_link(
+                                _ensure_fragment_label(external_inbound.uri.strip(), external_inbound.label)
+                            )
+                        )
                     continue
 
                 assert isinstance(catalog_inbound, NodeCatalogInbound)
@@ -133,9 +137,7 @@ class SubscriptionService:
                 if node.id not in node_link_by_remark:
                     try:
                         inbounds = await node_client.list_inbounds()
-                        node_remark_by_inbound[node.id] = {
-                            ib.id: str(ib.raw.get("remark") or "") for ib in inbounds
-                        }
+                        node_remark_by_inbound[node.id] = {ib.id: str(ib.raw.get("remark") or "") for ib in inbounds}
                         link_list = await node_client.get_client_links(email)
                         if not link_list:
                             for fb_email in _fallback_client_emails(node, node_inbound):
@@ -157,7 +159,7 @@ class SubscriptionService:
                 remark = node_remark_by_inbound.get(node.id, {}).get(node_inbound.xui_inbound_id)
                 link = node_link_by_remark.get(node.id, {}).get(remark) if remark else None
                 if link:
-                    links.append(_relabel_fragment(link, node_inbound.label))
+                    links.append(_normalize_link(_relabel_fragment(link, node_inbound.label)))
 
                 # Best-effort traffic collection (once per node) — errors are silent so link delivery is unaffected.
                 if node.id not in node_traffic_done:
@@ -440,6 +442,46 @@ def _relabel_fragment(uri: str, label: str) -> str:
         return uri
     prefix = uri.partition("#")[0]
     return f"{prefix}#{quote(label, safe='')}"
+
+
+# Query parameters defined by the official Hysteria2 URI scheme
+# (https://v2.hysteria.network/docs/developers/URI-Scheme/). Anything else is a
+# third-party extension and must not be assumed to be understood by other clients.
+_HYSTERIA2_SCHEMES = ("hysteria2://", "hy2://")
+_HYSTERIA2_SPEC_PARAMS = {"sni", "insecure", "obfs", "obfs-password", "pinsha256", "mport"}
+
+
+def _normalize_link(uri: str) -> str:
+    """Rewrite a panel link into its most interoperable canonical form before serving it."""
+    return _normalize_hysteria2_link(uri)
+
+
+def _normalize_hysteria2_link(uri: str) -> str:
+    """3x-ui emits Hysteria2 share links in the v2rayN/Xray dialect -- it appends ``fp``,
+    ``security``, ``type`` and ``alpn`` query params and uses ``allowInsecure``. None of those
+    belong to the official Hysteria2 URI scheme. Lenient clients (e.g. Happ) silently normalize
+    the link, but strict parsers (sing-box via podkop) trip over the extras -- notably ``fp`` --
+    and fail to build a working outbound.
+
+    Keep only the spec-defined query params, translating ``allowInsecure`` to ``insecure``, and
+    preserve everything else (auth, host, port, fragment label) verbatim."""
+    if not uri.lower().startswith(_HYSTERIA2_SCHEMES):
+        return uri
+
+    parts = urlsplit(uri)
+    kept: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        name = key.lower()
+        if name == "allowinsecure":
+            name, key, value = "insecure", "insecure", ("1" if value in ("1", "true") else "0")
+        if name not in _HYSTERIA2_SPEC_PARAMS or name in seen:
+            continue
+        seen.add(name)
+        kept.append((key, value))
+
+    query = urlencode(kept)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 def _base64_header(value: str) -> str:

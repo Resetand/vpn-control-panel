@@ -1,5 +1,5 @@
 This file provides guidance to Coding Agents working in this repository.
-The project author prefers to keep russian language to communication with agents.
+The project author prefers to keep russian language for a communication with agents.
 
 ## What this is
 

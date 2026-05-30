@@ -194,9 +194,7 @@ class ProvisioningService:
                 for ci in catalog_inbounds:
                     inbound = inbounds_by_id.get(ci.inbound.xui_inbound_id)
                     if inbound is None:
-                        raise ProvisioningError(
-                            f"inbound {ci.inbound.xui_inbound_id} was not found on node {node.id}"
-                        )
+                        raise ProvisioningError(f"inbound {ci.inbound.xui_inbound_id} was not found on node {node.id}")
                     target_inbounds.append(inbound)
 
                 target_ids = [ib.id for ib in target_inbounds]

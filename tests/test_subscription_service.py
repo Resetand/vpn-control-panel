@@ -534,11 +534,7 @@ async def test_renders_base64_text_response_with_metadata_headers(tmp_path: Path
 
     decoded = base64.b64decode(response.body).decode("utf-8")
     # Links are emitted in tag order: One, External, Two.
-    assert decoded == (
-        f"{NODE_1_LINK_ONE}\n"
-        "vless://external#External\n"
-        f"{NODE_1_LINK_TWO}\n"
-    )
+    assert decoded == (f"{NODE_1_LINK_ONE}\nvless://external#External\n{NODE_1_LINK_TWO}\n")
     assert response.media_type == "text/plain; charset=utf-8"
     assert response.headers["content-disposition"] == 'attachment; filename="subscription.txt"'
     assert response.headers["profile-title"] == "base64:RmFtaWx5IFZQTg=="
@@ -584,9 +580,7 @@ async def test_build_maps_panel_links_to_allowed_inbounds_by_remark(tmp_path: Pa
             self.node = node
 
         async def list_inbounds(self) -> list[XuiInbound]:
-            return [
-                XuiInbound(id=1, protocol="", settings={}, stream_settings={}, sniffing={}, raw={"remark": "One"})
-            ]
+            return [XuiInbound(id=1, protocol="", settings={}, stream_settings={}, sniffing={}, raw={"remark": "One"})]
 
         async def get_client_links(self, email: str) -> list[str]:
             return [NODE_1_LINK_ONE]
