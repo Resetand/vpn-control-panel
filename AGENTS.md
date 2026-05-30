@@ -1,42 +1,66 @@
-This file provides guidance to Coding Agents when working with code in this repository.
+This file provides guidance to Coding Agents working in this repository.
+The project author prefers to keep russian language to communication with agents.
 
-## Project
+## What this is
 
-A self-hosted control plane that turns a Telegram bot into the front door for a VPN service. It wraps one or more [3x-ui](https://github.com/MHSanaei/3x-ui) panels, manages subscriptions, issues subscription links, and automates trials, payments, and expiration.
+A self-hosted VPN control plane. Users interact through a **Telegram bot** to get VPN access; their VPN clients receive connection links via an **HTTP subscription endpoint**. The system wraps one or more [3x-ui](https://github.com/MHSanaei/3x-ui) panels and keeps them consistent with a single JSON file (`data.json`) as the source of truth.
 
-## Commands
+## Project layout
 
-Requires Python 3.11+ and [uv](https://github.com/astral-sh/uv). Common tasks are in the `Makefile`:
+```
+src/vpn_control_plane/   — application source
+  app.py                 — FastAPI factory + lifespan (composition root)
+  config.py              — settings (env vars)
+  provisioning.py        — client provisioning across nodes
+  data/                  — state models and store (reads/writes data.json)
+  subscription/          — subscription link assembly and HTTP rendering
+  xui/                   — 3x-ui panel API client
+  telegram/              — Telegram bot (aiogram)
+  http/                  — FastAPI routes
+  monitoring/            — node health polling and alerting
+  crons/                 — scheduled jobs (geofiles, reports)
+  backup/                — backup assembly
+tests/                   — pytest test suite
+data.json                — runtime state (topology + clients);
+.env                     — environment config; copy from .env.sample
+```
 
-- `make install` — `uv sync` (install/lock dependencies)
-- `make run` — run the bot (`uv run vpn-control-plane`, entry point `vpn_control_plane.app:main`)
-- `make test` — `uv run pytest`
-- `make lint` — `uv run ruff check src tests`
-- `make fmt` — `uv run ruff format src tests`
-- `make migrate` — `uv run alembic upgrade head`
+## Running the project
 
-Run a single test: `uv run pytest tests/test_subscription_service.py::test_start_trial_provisions_clients`
+**Production** — Docker Compose is the primary deployment mechanism:
 
-Tests live in `tests/`; `pytest` is configured (in `pyproject.toml`) with `pythonpath = ["src"]`, so imports use the installed package path `vpn_control_plane.*`. Async tests are written with `@pytest.mark.asyncio`.
+```
+make init      # first-time setup: creates .env from .env.sample and empty data.json
+make start     # build images and start (docker compose up -d)
+make stop      # stop containers
+make restart   # rebuild and restart
+make logs      # follow logs
+make sync      # reconcile data.json state → 3x-ui panels (run after editing data.json)
+```
 
-Ruff: line length 100, target py311, rule sets `E, F, I, UP, B, ASYNC` (see `ruff.toml`).
+**Development** — tests and linters also run inside Docker (no local Python install required):
 
-## Configuration
+```
+make test        # pytest
+make lint        # ruff check
+make format      # ruff format
+make typecheck   # mypy
+```
 
-Runtime config is read from `config.toml` (copy `config.example.toml`). `config.py` parses it with `tomllib` into plain `@dataclass` objects (`AppConfig` → `TelegramConfig`, `PanelConfig[]`, `SubscriptionConfig`, `StateConfig`). Panels are a TOML array of tables (`[[panels]]`), so multiple 3x-ui panels are supported and the service fans out across all of them.
+## Core domain concepts
 
-## Architecture
+**Nodes and inbounds.** A *node* is a 3x-ui panel instance. Each node has one or more *inbounds* — VPN entry points (e.g., VLESS over TCP). Every inbound — whether on a node or a static external URI — has a unique short *tag*. Tags are the routing unit for both provisioning and subscription delivery.
 
-The control plane keeps its own source-of-truth state (`data.json`) and reconciles it with the 3x-ui panels so the two stay consistent. Layers under `src/vpn_control_plane/`:
+**Clients.** A *client* is a provisioned VPN user. Clients receive a set of inbound tags (either the global default list or a per-client override). A client's subscription URL resolves to a bundle of connection links — one per allowed inbound.
 
-- **`app.py`** — composition root. `_run()` loads config, builds the `StateStore`, one `XUIClient` per panel, the `SubscriptionService`, and the `Notifier`, then starts the notifier as a background task and runs aiogram polling.
-- **`bot/`** — aiogram dispatcher. `build_dispatcher()` wires up `handlers.py` (commands, trial, menu) and `payments.py` (Telegram Stars invoices, pre-checkout, `successful_payment` → `service.renew`). `keyboards.py` holds inline keyboards.
-- **`subscription/service.py`** — lifecycle logic: `start_trial`, `renew`, `expire_due`. It owns provisioning: `_provision_clients` calls `add_client` on every panel; `_deprovision_clients` removes a user's clients on expiry. Every mutation calls `store.save()`.
-- **`data/`** — `state_store.py` is the durable JSON store: an `asyncio.Lock` guards writes, and `_write_atomic` writes to a tempfile then `os.replace`s it into place (atomic, crash-safe). `models.py` defines the dataclasses (`State`, `User`, `Client`, `SubscriptionStatus`) plus their `to_dict`/`from_dict` JSON (de)serialization — user-id keys are stored as strings in JSON and coerced back to `int`.
-- **`xui/`** — `client.py` wraps a 3x-ui panel's REST API over `httpx.AsyncClient` (lazy cookie login, `add_client`/`remove_client`). Note 3x-ui expects the client list as a JSON-encoded *string* in the `settings` field. `share_links.py` builds a user's subscription link as `{sub_link_base}/{base64url(user_id)}`.
-- **`notifications/notifier.py`** — background loop that calls `service.expire_due()` every hour.
+**External inbounds.** Static URIs (e.g., WireGuard configs) can be declared alongside node inbounds. Same tag-based routing, served as static links.
 
+## Key invariants
 
-## Docker
+**Provisioning is idempotent.** Creating a client that already exists on a node is safe — the code checks before adding and only fills in missing inbounds. Concurrent requests for the same client are serialized per-client.
 
-`docker-compose.yml` builds from the `Dockerfile` and bind-mounts `config.toml` (read-only) and `data.json` into the container.
+**Subscription delivery is fault-tolerant.** If one node is unreachable, links from other nodes are still returned. Traffic stats are best-effort and never block link delivery.
+
+**Subscription IDs have a migration path.** Clients have a live `subId` and an optional legacy ID; old URLs redirect to the canonical one rather than returning 404.
+
+**Monitoring uses a cooldown state machine.** An alert fires only after a condition persists past a configured threshold and won't repeat until a cooldown expires. State is in-memory and resets on restart.
