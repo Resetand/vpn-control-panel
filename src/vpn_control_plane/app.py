@@ -79,10 +79,4 @@ def _log_background_task_failure(name: str, task: asyncio.Task[None]) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    settings = Settings()  # type: ignore[call-arg]
-    uvicorn.run(
-        "vpn_control_plane.app:create_app",
-        factory=True,
-        host=settings.http_host,
-        port=settings.http_port,
-    )
+    uvicorn.run("vpn_control_plane.app:create_app", factory=True, host="0.0.0.0", port=8080)
