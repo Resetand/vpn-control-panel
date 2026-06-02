@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import logging
 import secrets
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -17,6 +20,9 @@ from vpn_control_plane.subscription import (
 
 NEW_URL_HEADER = "new-url"
 PROVIDER_ID_HEADER = "providerid"
+SUBSCRIPTION_ACCESS_LOG_FILE_NAME = "subscription_access.log"
+
+logger = logging.getLogger(__name__)
 
 
 def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
@@ -35,6 +41,7 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
 
     async def subscription(request: Request, sub_id: str, accept: str | None = Header(default=None)) -> Response:
         built_subscription = await _build_subscription_or_404(subscription_service, sub_id)
+        _log_subscription_access(settings, request, built_subscription)
         should_update_url = _should_update_subscription_url(
             request.url.path,
             sub_id,
@@ -65,6 +72,23 @@ def _build_subscription_service(settings: Settings, store: ControlPlaneStore) ->
         public_base_url=settings.public_subscription_base_url,
         token_salt=token_salt,
     )
+
+
+def _log_subscription_access(settings: Settings, request: Request, subscription: BuiltSubscription) -> None:
+    log_path = settings.data_file.parent / SUBSCRIPTION_ACCESS_LOG_FILE_NAME
+    record = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "client_id": subscription.client.id,
+        "client_comment": subscription.client.comment,
+        "requested_path": request.url.path,
+    }
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+            log_file.write("\n")
+    except OSError:
+        logger.exception("Failed to write subscription access log")
 
 
 def _backup_response(store: ControlPlaneStore) -> Response:
