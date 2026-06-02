@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
+import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
@@ -75,20 +78,48 @@ def build_public_subscription_url(public_base_url: str, sub_id: str) -> str:
     return f"{normalize_subscription_base_url(public_base_url)}/{quote(sub_id.strip('/'), safe='')}"
 
 
+def build_public_subscription_token(sub_id: str, salt: str | None) -> str:
+    sub_id = sub_id.strip().strip("/")
+    if not salt:
+        return sub_id
+    digest = hmac.new(salt.encode("utf-8"), sub_id.encode("utf-8"), hashlib.sha256).digest()
+    return _base62_encode(int.from_bytes(digest, byteorder="big"))
+
+
+def _base62_encode(value: int) -> str:
+    alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    if value == 0:
+        return alphabet[0]
+    encoded = ""
+    base = len(alphabet)
+    while value:
+        value, remainder = divmod(value, base)
+        encoded = f"{alphabet[remainder]}{encoded}"
+    return encoded
+
+
 class SubscriptionService:
     def __init__(
         self,
         store: ControlPlaneStore,
         *,
         public_base_url: str,
+        token_salt: str | None = None,
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
     ) -> None:
         self._store = store
         self._public_base_url = normalize_subscription_base_url(public_base_url)
+        self._token_salt = token_salt or None
         self._node_client_factory = node_client_factory or XuiNodeClient
 
+    def public_token_for_client(self, client: ClientRecord) -> str:
+        return build_public_subscription_token(client.effective_sub_id, self._token_salt)
+
     def public_url_for_client(self, client: ClientRecord) -> str:
-        return build_public_subscription_url(self._public_base_url, client.effective_sub_id)
+        return build_public_subscription_url(self._public_base_url, self.public_token_for_client(client))
+
+    def is_public_token_for_client(self, token: str, client: ClientRecord) -> bool:
+        return secrets.compare_digest(token.strip().strip("/"), self.public_token_for_client(client))
 
     async def build(self, requested_sub_id: str) -> BuiltSubscription:
         requested_sub_id = requested_sub_id.strip().strip("/")
@@ -145,9 +176,9 @@ class SubscriptionService:
                                 if link_list:
                                     break
                         link_map: dict[str, str] = {}
-                        for link in link_list:
-                            fragment = unquote(urlsplit(link).fragment)
-                            link_map.setdefault(fragment, link)
+                        for panel_link in link_list:
+                            fragment = unquote(urlsplit(panel_link).fragment)
+                            link_map.setdefault(fragment, panel_link)
                         node_link_by_remark[node.id] = link_map
                     except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
                         node_errors.append(f"node {node.id}: {exc}")
@@ -190,14 +221,17 @@ class SubscriptionService:
             node_errors=tuple(node_errors),
         )
 
-    @staticmethod
-    def _find_client(clients: Sequence[ClientRecord], requested_sub_id: str) -> ClientRecord | None:
+    def _find_client(self, clients: Sequence[ClientRecord], requested_sub_id: str) -> ClientRecord | None:
         for client in clients:
             if client.effective_sub_id == requested_sub_id:
                 return client
         for client in clients:
             if requested_sub_id in client.legacy_subscription_ids:
                 return client
+        if self._token_salt:
+            for client in clients:
+                if secrets.compare_digest(requested_sub_id, self.public_token_for_client(client)):
+                    return client
         return None
 
 

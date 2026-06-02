@@ -61,10 +61,15 @@ class TelegramBotServices:
 
 
 def create_services(settings: Settings, store: ControlPlaneStore) -> TelegramBotServices:
+    token_salt = settings.subscription_token_salt.get_secret_value() if settings.subscription_token_salt else None
     return TelegramBotServices(
         settings=settings,
         provisioning=ProvisioningService(store, default_vless_flow=settings.default_vless_flow),
-        subscription=SubscriptionService(store, public_base_url=settings.public_subscription_base_url),
+        subscription=SubscriptionService(
+            store,
+            public_base_url=settings.public_subscription_base_url,
+            token_salt=token_salt,
+        ),
         store=store,
     )
 

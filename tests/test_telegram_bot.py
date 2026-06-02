@@ -16,7 +16,7 @@ from vpn_control_plane.backup import build_data_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import ClientRecord, ControlPlaneStore
 from vpn_control_plane.provisioning import ProvisioningResult
-from vpn_control_plane.subscription import SubscriptionService
+from vpn_control_plane.subscription import SubscriptionService, build_public_subscription_token
 from vpn_control_plane.telegram.bot import (
     DEFAULT_MANUAL_CLIENT_COMMENT,
     HELP_TEXT,
@@ -69,9 +69,10 @@ def settings(
 ) -> Settings:
     values = {
         "VPN_DATA_FILE": str(tmp_path / "data.json"),
-        "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+        "VPN_SUBSCRIPTION_ROUTE": "/s/",
         "VPN_SUBSCRIPTION_DOMAIN": "example.test",
         "VPN_SUBSCRIPTION_PORT": "443",
+        "VPN_SUBSCRIPTION_TOKEN_SALT": "global-salt",
         "VPN_TELEGRAM_BOT_TOKEN": "token",
         "VPN_TELEGRAM_ALLOWED_USER_IDS": "100,200",
         "VPN_TELEGRAM_ADMIN_IDS": "1",
@@ -165,7 +166,13 @@ def services(
     return TelegramBotServices(
         settings=app_settings,
         provisioning=cast(Any, provisioning or FakeProvisioning()),
-        subscription=SubscriptionService(store, public_base_url=app_settings.public_subscription_base_url),
+        subscription=SubscriptionService(
+            store,
+            public_base_url=app_settings.public_subscription_base_url,
+            token_salt=app_settings.subscription_token_salt.get_secret_value()
+            if app_settings.subscription_token_salt
+            else None,
+        ),
         store=store,
     )
 
@@ -321,7 +328,8 @@ async def test_start_provisions_allowed_private_user_and_sends_url_qr_and_instru
 
     assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
     assert len(message.photos) == 1
-    assert "https://example.test/sub/100" in message.photos[0]["kwargs"]["caption"]
+    token = build_public_subscription_token("100", "global-salt")
+    assert f"https://example.test/s/{token}" in message.photos[0]["kwargs"]["caption"]
     assert message.answers[-1]["kwargs"] == {"parse_mode": "HTML", "disable_web_page_preview": True}
 
 
@@ -421,7 +429,8 @@ async def test_issue_creates_manual_client_with_comment_and_sends_material(tmp_p
     await handle_issue(cast(Any, message), services(tmp_path, provisioning))
 
     assert provisioning.issue_calls == ["Router kitchen"]
-    assert "https://example.test/sub/manual-1" in message.photos[0]["kwargs"]["caption"]
+    token = build_public_subscription_token("manual-1", "global-salt")
+    assert f"https://example.test/s/{token}" in message.photos[0]["kwargs"]["caption"]
 
 
 @pytest.mark.asyncio

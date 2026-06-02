@@ -20,6 +20,7 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
     subscription_service = SubscriptionService(
         store,
         public_base_url=settings.public_subscription_base_url,
+        token_salt=settings.subscription_token_salt.get_secret_value() if settings.subscription_token_salt else None,
     )
 
     @router.get("/health")
@@ -35,15 +36,18 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
             headers={"content-disposition": f'attachment; filename="{DATA_BACKUP_FILE_NAME}"'},
         )
 
-    @router.get(f"{settings.subscription_route}{{sub_id:path}}")
     async def subscription(sub_id: str, accept: str | None = Header(default=None)) -> Response:
         try:
             built_subscription = await subscription_service.build(sub_id)
         except UnknownSubscriptionClientError as exc:
             raise HTTPException(status_code=404, detail="subscription not found") from exc
-        if sub_id.strip().strip("/") != built_subscription.client.effective_sub_id:
+        if not subscription_service.is_public_token_for_client(sub_id, built_subscription.client):
             return RedirectResponse(built_subscription.public_url, status_code=status.HTTP_302_FOUND)
         return render_subscription_by_accept(built_subscription, accept)
+
+    routes = dict.fromkeys([settings.subscription_route, *settings.subscription_legacy_routes])
+    for route in sorted(routes, key=len, reverse=True):
+        router.add_api_route(f"{route}{{sub_id:path}}", subscription, methods=["GET"])
 
     return router
 

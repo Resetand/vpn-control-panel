@@ -76,6 +76,7 @@ LOCAL_COMPOSE_FILE := local/docker-compose.local.yml
 LOCAL_ENV_FILE := .env.local
 LOCAL_DATA_FILE := ./data.local.json
 INIT_ARGS ?=
+XUI_VERSION ?=
 
 # First-time setup: create config files from samples, then initialize node DBs.
 # Use INIT_ARGS=--restore to populate node DBs from backup files instead of
@@ -98,11 +99,13 @@ $(LOCAL_DATA_FILE):
 # Start / restart the local stack (nodes + control plane).
 # Patches node DBs with the current apiToken on every run (idempotent).
 # Requires .env.local and data.local.json — run `make init-local` first.
+# Pass XUI_VERSION=vX.Y.Z to pull a specific 3x-ui image and restart nodes.
 run-local:
 	@test -f $(LOCAL_ENV_FILE)  || (echo "$(LOCAL_ENV_FILE) not found — run: make init-local" && exit 1)
 	@test -f $(LOCAL_DATA_FILE) || (echo "$(LOCAL_DATA_FILE) not found — run: make init-local" && exit 1)
-	python3 local/init-nodes.py --patch-only
-	$(COMPOSE) -f $(LOCAL_COMPOSE_FILE) --env-file $(LOCAL_ENV_FILE) up -d --build
+	$(if $(XUI_VERSION),XUI_IMAGE_TAG=$(XUI_VERSION) )python3 local/init-nodes.py --patch-only
+	$(if $(XUI_VERSION),$(COMPOSE) -f $(LOCAL_COMPOSE_FILE) --env-file $(LOCAL_ENV_FILE) pull)
+	$(COMPOSE) -f $(LOCAL_COMPOSE_FILE) --env-file $(LOCAL_ENV_FILE) up -d --build $(if $(XUI_VERSION),--force-recreate)
 
 # Stop the local stack.
 stop-local:

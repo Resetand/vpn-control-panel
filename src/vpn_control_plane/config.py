@@ -37,11 +37,34 @@ def _split_csv_or_wildcard(value: object) -> set[str] | None:
     return _split_csv(value)
 
 
+def _split_csv_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        normalized = _strip_wrapping_quotes(value)
+        return [_strip_wrapping_quotes(item) for item in normalized.split(",") if _strip_wrapping_quotes(item)]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
 def normalize_subscription_route(value: str) -> str:
     value = value.strip().strip("/")
     if not value:
         raise ValueError("subscription route must not be empty")
     return f"/{value}/"
+
+
+def normalize_subscription_routes(value: object) -> list[str]:
+    routes: list[str] = []
+    seen: set[str] = set()
+    for item in _split_csv_list(value):
+        route = normalize_subscription_route(item)
+        if route not in seen:
+            routes.append(route)
+            seen.add(route)
+    return routes
 
 
 def build_public_subscription_base_url(domain: str, port: int, route: str) -> str:
@@ -60,7 +83,12 @@ class Settings(BaseSettings):
     )
 
     data_file: Path = Field(default=Path("data.json"), validation_alias="VPN_DATA_FILE")
-    subscription_route: str = Field(default="/sub/", validation_alias="VPN_SUBSCRIPTION_ROUTE")
+    subscription_route: str = Field(default="/s/", validation_alias="VPN_SUBSCRIPTION_ROUTE")
+    subscription_legacy_routes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["/sub/"],
+        validation_alias="VPN_SUBSCRIPTION_LEGACY_ROUTES",
+    )
+    subscription_token_salt: SecretStr | None = Field(default=None, validation_alias="VPN_SUBSCRIPTION_TOKEN_SALT")
     subscription_domain: str = Field(default="example.com", validation_alias="VPN_SUBSCRIPTION_DOMAIN")
     subscription_port: Annotated[int, Field(ge=1, le=65535)] = Field(
         default=443,
@@ -151,6 +179,11 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_subscription_route_value(cls, value: str) -> str:
         return normalize_subscription_route(value)
+
+    @field_validator("subscription_legacy_routes", mode="before")
+    @classmethod
+    def normalize_subscription_legacy_routes_value(cls, value: object) -> list[str]:
+        return normalize_subscription_routes(value)
 
     @property
     def public_subscription_base_url(self) -> str:

@@ -20,6 +20,7 @@ from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.subscription import (
     SubscriptionService,
     UnknownSubscriptionClientError,
+    build_public_subscription_token,
     build_public_subscription_url,
     render_subscription_response,
 )
@@ -185,10 +186,17 @@ def test_builds_legacy_public_subscription_url() -> None:
     )
 
 
+def test_builds_stable_public_subscription_token_from_salt() -> None:
+    assert build_public_subscription_token("personal-token", "global-salt") == (
+        "Q3tSn0X7FkI3CK0P7hoNvk12hXMeu5zwcl3VZgnHmS1"
+    )
+
+
 def test_subscription_endpoint_settings_normalize_route_and_derive_public_base_url() -> None:
     settings = Settings.model_validate(
         {
-            "VPN_SUBSCRIPTION_ROUTE": "sub",
+            "VPN_SUBSCRIPTION_ROUTE": "s",
+            "VPN_SUBSCRIPTION_LEGACY_ROUTES": "sub,/sub/9f3aKx7PqLm2Zr8/",
             "VPN_SUBSCRIPTION_DOMAIN": "resetand.my.id",
             "VPN_SUBSCRIPTION_PORT": "2096",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
@@ -197,9 +205,10 @@ def test_subscription_endpoint_settings_normalize_route_and_derive_public_base_u
     )
 
     assert normalize_subscription_route("/sub") == "/sub/"
-    assert settings.subscription_route == "/sub/"
-    assert settings.public_subscription_base_url == "https://resetand.my.id:2096/sub"
-    assert build_public_subscription_base_url("resetand.my.id", 443, "/sub/") == "https://resetand.my.id/sub"
+    assert settings.subscription_route == "/s/"
+    assert settings.subscription_legacy_routes == ["/sub/", "/sub/9f3aKx7PqLm2Zr8/"]
+    assert settings.public_subscription_base_url == "https://resetand.my.id:2096/s"
+    assert build_public_subscription_base_url("resetand.my.id", 443, "/s/") == "https://resetand.my.id/s"
 
 
 @pytest.mark.asyncio
@@ -286,6 +295,27 @@ async def test_sub_id_resolves_client_and_fetches_links_by_canonical_email(tmp_p
 
     assert subscription.links == [NODE_1_LINK_ONE]
     assert subscription.public_url == "https://resetand.my.id:2096/sub/personal-token"
+
+
+@pytest.mark.asyncio
+async def test_hashed_subscription_token_resolves_client_and_becomes_public_url(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[{"id": "123", "comment": "Migrated", "subId": "personal-token", "legacySubId": "123"}],
+        inbounds=[{"label": "One", "nodeId": 1, "xuiInboundId": 1}],
+    )
+    service = SubscriptionService(
+        store,
+        public_base_url="https://resetand.my.id:2096/s/",
+        token_salt="global-salt",
+        node_client_factory=cast(Any, lambda node: FakeXuiClient(node, {DEFAULT_EMAIL: [NODE_1_LINK_ONE]})),
+    )
+
+    token = build_public_subscription_token("personal-token", "global-salt")
+    subscription = await service.build(token)
+
+    assert subscription.links == [NODE_1_LINK_ONE]
+    assert subscription.public_url == f"https://resetand.my.id:2096/s/{token}"
 
 
 @pytest.mark.asyncio
@@ -696,9 +726,10 @@ def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None
     settings = Settings.model_validate(
         {
             "VPN_DATA_FILE": str(tmp_path / "data.json"),
-            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_ROUTE": "/s/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_SUBSCRIPTION_TOKEN_SALT": "global-salt",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
@@ -706,7 +737,8 @@ def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None
     app = FastAPI()
     app.include_router(create_router(settings, store))
 
-    response = TestClient(app).get("/sub/123", headers={"accept": "application/json"})
+    token = build_public_subscription_token("123", "global-salt")
+    response = TestClient(app).get(f"/s/{token}", headers={"accept": "application/json"})
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/json; charset=utf-8"
@@ -714,7 +746,7 @@ def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None
     assert payload["subscription"]["title"] == "Family VPN"
     assert payload["subscription"]["profile_title"] == "Family VPN"
     assert payload["subscription"]["client_title"] == "Existing"
-    assert payload["subscription"]["public_url"] == "https://example.test/sub/123"
+    assert payload["subscription"]["public_url"] == f"https://example.test/s/{token}"
     assert base64.b64decode(payload["subscription"]["encoded"]).decode("utf-8") == "vless://external#Germany\n"
     assert payload["links"] == [{"name": "Germany", "protocol": "VLESS", "url": "vless://external#Germany"}]
     assert payload["recommended_clients"]["android"]["name"] == "Happ"
@@ -736,9 +768,11 @@ def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Pat
     settings = Settings.model_validate(
         {
             "VPN_DATA_FILE": str(tmp_path / "data.json"),
-            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_ROUTE": "/s/",
+            "VPN_SUBSCRIPTION_LEGACY_ROUTES": "/sub/,/sub/9f3aKx7PqLm2Zr8/",
             "VPN_SUBSCRIPTION_DOMAIN": "example.test",
             "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_SUBSCRIPTION_TOKEN_SALT": "global-salt",
             "VPN_TELEGRAM_BOT_TOKEN": "token",
             "VPN_TELEGRAM_ADMIN_IDS": "1",
         }
@@ -746,10 +780,11 @@ def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Pat
     app = FastAPI()
     app.include_router(create_router(settings, store))
 
-    response = TestClient(app).get("/sub/123", follow_redirects=False)
+    response = TestClient(app).get("/sub/9f3aKx7PqLm2Zr8/123", follow_redirects=False)
+    token = build_public_subscription_token("personal-token", "global-salt")
 
     assert response.status_code == 302
-    assert response.headers["location"] == "https://example.test/sub/personal-token"
+    assert response.headers["location"] == f"https://example.test/s/{token}"
 
 
 def test_subscription_route_keeps_legacy_base64_for_wildcard_accept(tmp_path: Path) -> None:

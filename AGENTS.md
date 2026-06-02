@@ -53,6 +53,7 @@ make typecheck   # mypy
 make init-local                      # first time: init node DBs (bootstrap or seed from backup.db)
 make init-local INIT_ARGS=--restore  # re-seed from local/nodes/<host>/db/backup.db
 make run-local                       # start / restart everything
+make run-local XUI_VERSION=vX.X.X    # start nodes with specified version (equvalent to production update if db exists)
 make stop-local                      # stop everything
 make logs-local [SVC=app]            # follow logs
 ```
