@@ -116,6 +116,7 @@ class SubscriptionMetadata(StateModel):
     profile_web_page_url: str | None = Field(default=None, alias="profileWebPageUrl")
     subscription_userinfo: str | None = Field(default=None, alias="subscriptionUserinfo")
     support_url: str | None = Field(default=None, alias="supportUrl")
+    happ_provider_id: str | None = Field(default=None, alias="happProviderId")
     announce: str | None = None
     routing: str | None = None
     routing_enable: bool | None = Field(default=None, alias="routingEnable")

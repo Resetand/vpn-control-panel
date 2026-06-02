@@ -106,7 +106,8 @@ If your JSON data uses `${{ env.VAR_NAME }}` templates, define those variables i
   "clients": [],
   "defaultClientInboundTags": ["eu-default"],
   "subscription": {
-    "profileTitle": "My VPN"
+    "profileTitle": "My VPN",
+    "happProviderId": "optional-happ-proxy-provider-id",
   }
 }
 ```

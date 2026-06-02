@@ -764,6 +764,7 @@ def test_subscription_route_adds_new_url_header_for_legacy_url(tmp_path: Path) -
             }
         ],
         inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"happProviderId": "GP7N53Lz"},
     )
     settings = Settings.model_validate(
         {
@@ -784,11 +785,9 @@ def test_subscription_route_adds_new_url_header_for_legacy_url(tmp_path: Path) -
     token = build_public_subscription_token("personal-token", "global-salt")
 
     assert response.status_code == 200
+    assert response.headers["providerid"] == "GP7N53Lz"
     assert response.headers["new-url"] == f"https://example.test/s/{token}"
-    assert base64.b64decode(response.text).decode("utf-8") == (
-        f"#new-url https://example.test/s/{token}\n"
-        "vless://external#Germany\n"
-    )
+    assert base64.b64decode(response.text).decode("utf-8") == "vless://external#Germany\n"
 
 
 def test_subscription_route_redirects_html_legacy_url_to_canonical_url(tmp_path: Path) -> None:
@@ -842,6 +841,7 @@ def test_subscription_route_omits_new_url_header_for_canonical_url(tmp_path: Pat
             }
         ],
         inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"happProviderId": "GP7N53Lz"},
     )
     settings = Settings.model_validate(
         {
@@ -862,6 +862,7 @@ def test_subscription_route_omits_new_url_header_for_canonical_url(tmp_path: Pat
     response = TestClient(app).get(f"/s/{token}")
 
     assert response.status_code == 200
+    assert response.headers["providerid"] == "GP7N53Lz"
     assert "new-url" not in response.headers
 
 

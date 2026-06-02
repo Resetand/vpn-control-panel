@@ -50,7 +50,7 @@ def valid_state() -> dict[str, object]:
             }
         ],
         "defaultClientInboundTags": ["eu", "extra"],
-        "subscription": {"profileTitle": "base64:VGVzdA==", "routingEnable": True},
+        "subscription": {"profileTitle": "base64:VGVzdA==", "happProviderId": "GP7N53Lz", "routingEnable": True},
     }
 
 
@@ -70,6 +70,7 @@ def test_loads_valid_state_and_normalizes_fields(tmp_path: Path, monkeypatch: py
     assert state.clients[0].legacy_subscription_ids == {"123456789"}
     assert effective_inbound_tags(state, state.clients[0]) == ["eu", "extra"]
     assert state.subscription.profile_title == "base64:VGVzdA=="
+    assert state.subscription.happ_provider_id == "GP7N53Lz"
     assert state.subscription.routing_enable is True
 
 

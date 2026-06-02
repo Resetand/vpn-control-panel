@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import secrets
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
@@ -17,6 +16,7 @@ from vpn_control_plane.subscription import (
 )
 
 NEW_URL_HEADER = "new-url"
+PROVIDER_ID_HEADER = "providerid"
 
 
 def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
@@ -46,8 +46,11 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
             return RedirectResponse(built_subscription.public_url, status_code=status.HTTP_302_FOUND)
 
         response = render_subscription_by_accept(built_subscription, accept)
-        if should_update_url:
-            _attach_new_url(response, built_subscription.public_url)
+        _attach_subscription_headers(
+            response,
+            provider_id=built_subscription.metadata.happ_provider_id,
+            new_url=built_subscription.public_url if should_update_url else None,
+        )
         return response
 
     for route in _subscription_routes(settings):
@@ -72,14 +75,16 @@ def _backup_response(store: ControlPlaneStore) -> Response:
     )
 
 
-def _attach_new_url(response: Response, public_url: str) -> None:
-    response.headers[NEW_URL_HEADER] = public_url
-    if not _is_plain_text_response(response):
-        return
-
-    decoded_body = base64.b64decode(response.body).decode("utf-8")
-    response.body = base64.b64encode(f"#{NEW_URL_HEADER} {public_url}\n{decoded_body}".encode())
-    response.headers["content-length"] = str(len(response.body))
+def _attach_subscription_headers(
+    response: Response,
+    *,
+    provider_id: str | None,
+    new_url: str | None,
+) -> None:
+    if provider_id:
+        response.headers[PROVIDER_ID_HEADER] = provider_id
+    if new_url:
+        response.headers[NEW_URL_HEADER] = new_url
 
 
 async def _build_subscription_or_404(
@@ -122,10 +127,6 @@ def _accepts_html(accept: str | None) -> bool:
     if not accept:
         return False
     return any(item.split(";", 1)[0].strip() == "text/html" for item in accept.lower().split(","))
-
-
-def _is_plain_text_response(response: Response) -> bool:
-    return response.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "text/plain"
 
 
 def _authorize_backup(settings: Settings, authorization: str | None) -> None:
