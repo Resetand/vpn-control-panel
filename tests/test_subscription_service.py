@@ -752,7 +752,7 @@ def test_subscription_route_returns_json_for_json_accept(tmp_path: Path) -> None
     assert payload["recommended_clients"]["android"]["name"] == "Happ"
 
 
-def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Path) -> None:
+def test_subscription_route_adds_new_url_header_for_legacy_url(tmp_path: Path) -> None:
     store = prepare_store(
         tmp_path,
         clients=[
@@ -780,11 +780,111 @@ def test_subscription_route_redirects_legacy_id_to_subscription_id(tmp_path: Pat
     app = FastAPI()
     app.include_router(create_router(settings, store))
 
-    response = TestClient(app).get("/sub/9f3aKx7PqLm2Zr8/123", follow_redirects=False)
+    response = TestClient(app).get("/sub/9f3aKx7PqLm2Zr8/123")
+    token = build_public_subscription_token("personal-token", "global-salt")
+
+    assert response.status_code == 200
+    assert response.headers["new-url"] == f"https://example.test/s/{token}"
+    assert base64.b64decode(response.text).decode("utf-8") == "vless://external#Germany\n"
+
+
+def test_subscription_route_redirects_html_legacy_url_to_canonical_url(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[
+            {
+                "id": "123",
+                "comment": "Existing",
+                "subId": "personal-token",
+                "legacySubId": "123",
+            }
+        ],
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
+            "VPN_SUBSCRIPTION_ROUTE": "/s/",
+            "VPN_SUBSCRIPTION_LEGACY_ROUTES": "/sub/,/sub/9f3aKx7PqLm2Zr8/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_SUBSCRIPTION_TOKEN_SALT": "global-salt",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    response = TestClient(app).get(
+        "/sub/9f3aKx7PqLm2Zr8/123",
+        headers={"accept": "text/html"},
+        follow_redirects=False,
+    )
     token = build_public_subscription_token("personal-token", "global-salt")
 
     assert response.status_code == 302
     assert response.headers["location"] == f"https://example.test/s/{token}"
+
+
+def test_subscription_route_omits_new_url_header_for_canonical_url(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[
+            {
+                "id": "123",
+                "comment": "Existing",
+                "subId": "personal-token",
+                "legacySubId": "123",
+            }
+        ],
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
+            "VPN_SUBSCRIPTION_ROUTE": "/s/",
+            "VPN_SUBSCRIPTION_LEGACY_ROUTES": "/sub/,/sub/9f3aKx7PqLm2Zr8/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_SUBSCRIPTION_TOKEN_SALT": "global-salt",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    token = build_public_subscription_token("personal-token", "global-salt")
+    response = TestClient(app).get(f"/s/{token}")
+
+    assert response.status_code == 200
+    assert "new-url" not in response.headers
+
+
+def test_subscription_route_does_not_treat_primary_sub_route_as_legacy(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+    )
+    settings = Settings.model_validate(
+        {
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
+            "VPN_SUBSCRIPTION_ROUTE": "/sub/",
+            "VPN_SUBSCRIPTION_LEGACY_ROUTES": "/sub/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+    app = FastAPI()
+    app.include_router(create_router(settings, store))
+
+    response = TestClient(app).get("/sub/123", headers={"accept": "text/html"}, follow_redirects=False)
+
+    assert response.status_code == 200
+    assert "new-url" not in response.headers
 
 
 def test_subscription_route_keeps_legacy_base64_for_wildcard_accept(tmp_path: Path) -> None:
