@@ -785,7 +785,10 @@ def test_subscription_route_adds_new_url_header_for_legacy_url(tmp_path: Path) -
 
     assert response.status_code == 200
     assert response.headers["new-url"] == f"https://example.test/s/{token}"
-    assert base64.b64decode(response.text).decode("utf-8") == "vless://external#Germany\n"
+    assert base64.b64decode(response.text).decode("utf-8") == (
+        f"#new-url https://example.test/s/{token}\n"
+        "vless://external#Germany\n"
+    )
 
 
 def test_subscription_route_redirects_html_legacy_url_to_canonical_url(tmp_path: Path) -> None:
