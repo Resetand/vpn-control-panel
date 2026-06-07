@@ -11,6 +11,7 @@ import uvicorn
 from vpn_control_plane.config import Settings
 from vpn_control_plane.crons.base import App, run_registered_cron_jobs, wire_cron_jobs
 from vpn_control_plane.data.store import ControlPlaneStore
+from vpn_control_plane.external_subscriptions import run_external_subscription_refresh
 from vpn_control_plane.http.routes import create_router
 from vpn_control_plane.monitoring import run_monitoring_alerts
 from vpn_control_plane.telegram.bot import run_telegram_bot
@@ -29,6 +30,7 @@ def create_app(settings: Settings | None = None, *, start_telegram: bool = True)
     async def lifespan(_app: App) -> AsyncIterator[None]:
         bot_task = None
         monitoring_task = None
+        external_subscriptions_task = None
         if start_telegram:
             logger.info("Starting Telegram bot background task")
             bot_task = asyncio.create_task(run_telegram_bot(settings, store))
@@ -41,10 +43,20 @@ def create_app(settings: Settings | None = None, *, start_telegram: bool = True)
             monitoring_task.add_done_callback(
                 lambda completed_task: _log_background_task_failure("Monitoring alerts", completed_task)
             )
+        logger.info("Starting external subscriptions refresh background task")
+        external_subscriptions_task = asyncio.create_task(run_external_subscription_refresh(settings, store))
+        external_subscriptions_task.add_done_callback(
+            lambda completed_task: _log_background_task_failure("External subscriptions refresh", completed_task)
+        )
         try:
             async with run_registered_cron_jobs(_app, settings, store):
                 yield
         finally:
+            if external_subscriptions_task is not None:
+                logger.info("Stopping external subscriptions refresh background task")
+                external_subscriptions_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await external_subscriptions_task
             if monitoring_task is not None:
                 logger.info("Stopping monitoring alerts background task")
                 monitoring_task.cancel()

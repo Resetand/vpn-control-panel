@@ -64,6 +64,7 @@ def _build_subscription_service(settings: Settings, store: ControlPlaneStore) ->
         store,
         public_base_url=settings.public_subscription_base_url,
         token_salt=token_salt,
+        resolved_inbounds_path=settings.external_subscriptions_resolved_path,
     )
 
 

@@ -184,10 +184,33 @@ brew install age
 
 The decrypted `env.encrypted` archive contains hidden file `.env`.
 
+## External subscriptions
+
+Reuse inbounds from an upstream subscription feed instead of pasting links by hand. Declare a feed in `data.json`:
+
+```json
+"externalSubscriptions": [
+  { "name": "blanc", "url": "https://.../sub", "updateInterval": 60}
+]
+```
+
+A background job (also runnable manually with `make resolve-external-subscriptions`) fetches each feed, keeps inbounds whose label matches the optional `inboundFilter` regex, and writes them to `external_subscriptions.resolved.json` (next to `data.json`) with an auto-generated `slug` per label (e.g. `🇳🇱 Netherlands, Extra Whitelist Delta` → `netherlands-extra-whitelist-delta`).
+
+Reference a resolved inbound from `externalInbounds` by putting `@<name>:<slug>` (exact) or `@<name>:~<regex>` (first match) in `uri`:
+
+```json
+"externalInbounds": [
+  { "tag": "blanc-de", "label": "🇩🇪 Германия", "uri": "@blanc:~франкфурт" }
+]
+```
+
+The `tag`/`label` you set here are what clients see and reference; the upstream link is resolved at request time. If a reference doesn't match anything yet, that link is simply skipped — it never breaks the subscription.
+
 ## Commands
 
 ```bash
 make init                         # create .env and missing data.json
+make resolve-external-subscriptions   # fetch external subscription feeds into the resolved file
 make restore-data BACKUP=file.tar.gz  # restore data archive into data.json
 make backup-data                  # create backup archive from data.json
 make backup-secrets               # create encrypted .env backup when SSH key is configured

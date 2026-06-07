@@ -1,4 +1,4 @@
-.PHONY: init init-data restore-data backup-data backup-secrets sync up run down stop logs ps build test lint format typecheck clean \
+.PHONY: init init-data restore-data backup-data backup-secrets sync resolve-external-subscriptions up run down stop logs ps build test lint format typecheck clean \
         init-local run-local stop-local logs-local
 
 COMPOSE ?= docker compose
@@ -38,6 +38,9 @@ backup-secrets: $(ENV_FILE)
 
 sync: $(ENV_FILE) init-data
 	$(COMPOSE_ENV) $(COMPOSE) run --rm --build dev python -m vpn_control_plane.sync --data-file "$(VPN_CONTAINER_DATA_FILE)" $(SYNC_FLAGS)
+
+resolve-external-subscriptions: $(ENV_FILE) init-data
+	$(COMPOSE_ENV) $(COMPOSE) run --rm --build dev python -m vpn_control_plane.external_subscriptions --data-file "$(VPN_CONTAINER_DATA_FILE)"
 
 start: init
 	$(COMPOSE_ENV) $(COMPOSE) --env-file "$(ENV_FILE)" up -d --build app nginx

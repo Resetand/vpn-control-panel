@@ -1,5 +1,7 @@
 /tmp
 data.json
+external_subscriptions.resolved.json
+external_subscriptions.local.resolved.json
 /.claude
 
 # Python

@@ -4,12 +4,15 @@ from vpn_control_plane.data.models import (
     ControlPlaneState,
     ExternalCatalogInbound,
     ExternalInboundRecord,
+    ExternalSubscriptionRecord,
+    ExternalSubscriptionRef,
     NodeCatalogInbound,
     NodeInboundRecord,
     NodeRecord,
     SubscriptionMetadata,
     build_inbound_catalog,
     effective_inbound_tags,
+    parse_external_subscription_ref,
 )
 from vpn_control_plane.data.store import ControlPlaneStore, StateValidationError
 
@@ -20,6 +23,8 @@ __all__ = [
     "ControlPlaneStore",
     "ExternalCatalogInbound",
     "ExternalInboundRecord",
+    "ExternalSubscriptionRecord",
+    "ExternalSubscriptionRef",
     "NodeCatalogInbound",
     "NodeInboundRecord",
     "NodeRecord",
@@ -27,4 +32,5 @@ __all__ = [
     "SubscriptionMetadata",
     "build_inbound_catalog",
     "effective_inbound_tags",
+    "parse_external_subscription_ref",
 ]

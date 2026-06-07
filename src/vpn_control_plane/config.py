@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     report_telegram_schedule: str = Field(default="0 3 * * *", validation_alias="REPORT_TELEGRAM_SCHEDULE")
     geofiles_update_enabled: bool = Field(default=False, validation_alias="GEOFILES_UPDATE_ENABLED")
     geofiles_update_schedule: str = Field(default="0 3 * * *", validation_alias="GEOFILES_UPDATE_SCHEDULE")
+    external_subscriptions_resolved_file: str = Field(
+        default="external_subscriptions.resolved.json",
+        validation_alias="VPN_EXTERNAL_SUBSCRIPTIONS_RESOLVED",
+    )
     monitoring_alerts_enabled: bool = Field(default=False, validation_alias="VPN_MONITORING_ALERTS_ENABLED")
     monitoring_poll_interval_seconds: Annotated[int, Field(ge=1)] = Field(
         default=30,
@@ -192,3 +196,8 @@ class Settings(BaseSettings):
             self.subscription_port,
             self.subscription_route,
         )
+
+    @property
+    def external_subscriptions_resolved_path(self) -> Path:
+        path = Path(self.external_subscriptions_resolved_file)
+        return path if path.is_absolute() else self.data_file.parent / path

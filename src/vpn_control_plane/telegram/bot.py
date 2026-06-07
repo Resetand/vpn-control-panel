@@ -69,6 +69,7 @@ def create_services(settings: Settings, store: ControlPlaneStore) -> TelegramBot
             store,
             public_base_url=settings.public_subscription_base_url,
             token_salt=token_salt,
+            resolved_inbounds_path=settings.external_subscriptions_resolved_path,
         ),
         store=store,
     )

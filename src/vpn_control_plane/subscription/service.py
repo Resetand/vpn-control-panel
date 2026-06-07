@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
 from io import BytesIO
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
@@ -26,6 +27,7 @@ from vpn_control_plane.data import (
     build_inbound_catalog,
     effective_inbound_tags,
 )
+from vpn_control_plane.external_subscriptions.cache import ResolvedInboundsStore, resolve_reference
 from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.xui import XuiNodeClient
 
@@ -106,11 +108,15 @@ class SubscriptionService:
         public_base_url: str,
         token_salt: str | None = None,
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
+        resolved_inbounds_path: Path | str | None = None,
     ) -> None:
         self._store = store
         self._public_base_url = normalize_subscription_base_url(public_base_url)
         self._token_salt = token_salt or None
         self._node_client_factory = node_client_factory or XuiNodeClient
+        self._resolved_inbounds_store = (
+            ResolvedInboundsStore(resolved_inbounds_path) if resolved_inbounds_path is not None else None
+        )
 
     def public_token_for_client(self, client: ClientRecord) -> str:
         return build_public_subscription_token(client.effective_sub_id, self._token_salt)
@@ -129,6 +135,7 @@ class SubscriptionService:
             raise UnknownSubscriptionClientError("unknown subscription client")
 
         catalog = build_inbound_catalog(state)
+        resolved_inbounds = self._resolved_inbounds_store.load() if self._resolved_inbounds_store is not None else {}
         node_clients: dict[int, XuiNodeClient] = {}
         # Per node, fetched once: {xui_inbound_id: remark} and {remark: panel link}.
         node_remark_by_inbound: dict[int, dict[int, str]] = {}
@@ -144,12 +151,11 @@ class SubscriptionService:
                 catalog_inbound = catalog[tag]
                 if isinstance(catalog_inbound, ExternalCatalogInbound):
                     external_inbound = catalog_inbound.inbound
-                    if external_inbound.uri.strip():
-                        links.append(
-                            _normalize_link(
-                                _ensure_fragment_label(external_inbound.uri.strip(), external_inbound.label)
-                            )
-                        )
+                    # uri is either a literal link or an "@name:slug" reference resolved from the
+                    # external-subscriptions file; an unresolved reference is silently skipped.
+                    uri = resolve_reference(external_inbound.uri, resolved_inbounds)
+                    if uri and uri.strip():
+                        links.append(_normalize_link(_ensure_fragment_label(uri.strip(), external_inbound.label)))
                     continue
 
                 assert isinstance(catalog_inbound, NodeCatalogInbound)
