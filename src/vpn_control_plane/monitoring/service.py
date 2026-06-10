@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from vpn_control_plane.config import Settings
+from vpn_control_plane.crons.base import interval_delays, run_iterations_forever
 from vpn_control_plane.data import ControlPlaneStore, NodeRecord
 from vpn_control_plane.monitoring.detectors import (
     ActiveCondition,
@@ -51,9 +52,11 @@ class MonitoringService:
         self._state = MonitoringAlertState()
 
     async def run_forever(self) -> None:
-        while True:
-            await self.poll_once()
-            await asyncio.sleep(self._settings.monitoring_poll_interval_seconds)
+        await run_iterations_forever(
+            "Monitoring alerts",
+            self.poll_once,
+            delay_until_next_run=interval_delays(self._settings.monitoring_poll_interval_seconds),
+        )
 
     async def poll_once(self) -> None:
         nodes = select_monitored_nodes(self._store.load_nodes())

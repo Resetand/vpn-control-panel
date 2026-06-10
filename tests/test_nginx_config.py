@@ -25,7 +25,7 @@ def run_subscription_env_script(
             f"VPN_SUBSCRIPTION_LEGACY_ROUTES='{legacy_routes}' "
             f"NGINX_CERT_DIR={cert_dir} "
             f". {SCRIPT.resolve()} "
-            f"&& eval \"printf '%s' \\\"\\${output_var}\\\"\"",
+            f'&& eval "printf \'%s\' \\"\\${output_var}\\""',
         ],
         check=False,
         capture_output=True,

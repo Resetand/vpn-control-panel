@@ -41,10 +41,10 @@ make sync      # reconcile data.json state → 3x-ui panels (run after editing d
 **Development** — tests and linters also run inside Docker (no local Python install required):
 
 ```
-make test        # pytest
-make lint        # ruff check
-make format      # ruff format
-make typecheck   # mypy
+make test        # `pytest` for local dev
+make lint        # `ruff check` for local dev
+make format      # `ruff format` for local dev
+make typecheck   # `mypy` for local dev
 ```
 
 **Local stack** — real 3x-ui nodes + control plane in Docker, driven by `data.local.json`:

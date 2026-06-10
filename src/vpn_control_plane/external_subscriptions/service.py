@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -9,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from vpn_control_plane.config import Settings
+from vpn_control_plane.crons.base import interval_delays, run_iterations_forever
 from vpn_control_plane.data import ControlPlaneStore, ExternalSubscriptionRecord
 from vpn_control_plane.external_subscriptions.cache import (
     ResolvedExternalInbound,
@@ -63,9 +63,11 @@ class ExternalSubscriptionService:
         self._now = now or (lambda: datetime.now(UTC))
 
     async def run_forever(self) -> None:
-        while True:
-            await self.refresh_due()
-            await asyncio.sleep(_TICK_SECONDS)
+        await run_iterations_forever(
+            "External subscriptions refresh",
+            self.refresh_due,
+            delay_until_next_run=interval_delays(_TICK_SECONDS),
+        )
 
     async def refresh_due(self) -> None:
         """Refresh only subscriptions whose updateInterval has elapsed (the loop's per-tick work)."""

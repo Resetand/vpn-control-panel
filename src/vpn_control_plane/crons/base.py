@@ -20,6 +20,51 @@ logger = logging.getLogger(__name__)
 
 CronHandler = Callable[["Settings", ControlPlaneStore], Awaitable[None]]
 CRON_FIELD_RANGES = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+ITERATION_TIMEOUT_SECONDS = 60 * 60
+
+
+async def run_iterations_forever(
+    name: str,
+    iteration: Callable[[], Awaitable[None]],
+    *,
+    delay_until_next_run: Callable[[], float],
+    iteration_timeout_seconds: float = ITERATION_TIMEOUT_SECONDS,
+) -> None:
+    """The single loop every scheduled background job runs on.
+
+    Guarantees:
+    - iterations never overlap: the next run is scheduled only after the previous one finishes;
+    - a failing iteration never stops the loop or affects later iterations;
+    - an iteration stuck past ``iteration_timeout_seconds`` is cancelled and the loop moves on.
+
+    Cancelling the surrounding task is the only way to stop the loop.
+    """
+    while True:
+        await asyncio.sleep(delay_until_next_run())
+        try:
+            async with asyncio.timeout(iteration_timeout_seconds):
+                await iteration()
+        except TimeoutError:
+            logger.error(
+                "%s iteration was cancelled after exceeding the %.0fs timeout", name, iteration_timeout_seconds
+            )
+        except Exception:
+            logger.exception("%s iteration failed", name)
+
+
+def interval_delays(interval_seconds: float) -> Callable[[], float]:
+    """Delay sequence for interval jobs: first run immediately, then wait ``interval_seconds``
+    after each iteration completes."""
+    first = True
+
+    def delay_until_next_run() -> float:
+        nonlocal first
+        if first:
+            first = False
+            return 0.0
+        return interval_seconds
+
+    return delay_until_next_run
 
 
 class CronScheduleError(ValueError):
@@ -74,16 +119,17 @@ def _start_cron_job(job: CronJob, settings: Settings, store: ControlPlaneStore) 
 
 
 async def _run_cron_loop(job: CronJob, settings: Settings, store: ControlPlaneStore) -> None:
-    while True:
+    def delay_until_next_run() -> float:
         now = datetime.now(UTC)
         next_time = next_cron_time(job.schedule, now)
-        delay = max(0.0, (next_time - now).total_seconds())
         logger.info("Next %s cron run is scheduled at %s", job.name, next_time.isoformat())
-        await asyncio.sleep(delay)
-        try:
-            await job.handler(settings, store)
-        except Exception:
-            logger.exception("%s cron job failed", job.name)
+        return max(0.0, (next_time - now).total_seconds())
+
+    await run_iterations_forever(
+        job.name,
+        lambda: job.handler(settings, store),
+        delay_until_next_run=delay_until_next_run,
+    )
 
 
 def _log_cron_task_failure(name: str, task: asyncio.Task[None]) -> None:
