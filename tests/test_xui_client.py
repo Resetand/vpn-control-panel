@@ -412,6 +412,29 @@ async def test_update_client_maps_uuid_to_id_and_drops_read_only_fields() -> Non
 
 
 @pytest.mark.asyncio
+async def test_update_client_splits_allowed_ips_string_into_list() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return json_response({"success": True})
+
+    # 3x-ui 3.7 reads allowedIPs back as a string but rejects anything but a list on write.
+    rows = [
+        ({"email": client_email("1"), "allowedIPs": ""}, []),
+        ({"email": client_email("2"), "allowedIPs": "10.0.0.0/8, 192.168.0.0/16"}, ["10.0.0.0/8", "192.168.0.0/16"]),
+        ({"email": client_email("3"), "allowedIPs": "10.0.0.0/8\n192.168.0.0/16"}, ["10.0.0.0/8", "192.168.0.0/16"]),
+        ({"email": client_email("4"), "allowedIPs": ["10.0.0.0/8"]}, ["10.0.0.0/8"]),
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        for row, _ in rows:
+            await XuiNodeClient(node(), http_client=http_client).update_client(row["email"], row)
+
+    for request, (_, expected) in zip(requests, rows, strict=True):
+        assert json.loads(request.content)["allowedIPs"] == expected
+
+
+@pytest.mark.asyncio
 async def test_update_client_raises_on_failure() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return json_response({"success": False, "msg": "update rejected"})

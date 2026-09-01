@@ -389,10 +389,16 @@ def _writable_client_payload(client: JsonObject) -> JsonObject:
     The list/get endpoints return ``id`` as the numeric DB primary key plus the protocol
     secret in ``uuid``/``password``/``auth``, but the update endpoint expects ``id`` to be
     that string secret. Read-only/denormalized fields are dropped.
+
+    3x-ui 3.7 reads ``allowedIPs`` back as a string but only accepts a list on write, so a
+    round-tripped client is rejected unless the value is split back into a list.
     """
     payload = dict(client)
     payload.pop("traffic", None)
     payload.pop("inboundIds", None)
+    allowed_ips = payload.get("allowedIPs")
+    if isinstance(allowed_ips, str):
+        payload["allowedIPs"] = [entry.strip() for entry in allowed_ips.replace("\n", ",").split(",") if entry.strip()]
     identity = payload.get("uuid") or payload.get("password") or payload.get("auth")
     if isinstance(identity, str) and identity:
         payload["id"] = identity
