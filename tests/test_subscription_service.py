@@ -267,6 +267,22 @@ async def test_external_link_fragment_is_kept_when_present(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_amneziawg_link_is_matched_by_embedded_remark_and_served_verbatim(tmp_path: Path) -> None:
+    # AmneziaWG share links carry no URL fragment: the whole payload is the base64 WireGuard
+    # config, and the inbound remark arrives as a comment inside it. Appending a "#label" would
+    # corrupt the base64 the client decodes, so the link must be served exactly as the panel
+    # emitted it.
+    config = "[Interface]\nAddress = 10.8.1.3/32\n\n# One\n[Peer]\nEndpoint = node-1.example.test:38901\n"
+    link = "vpn://" + base64.urlsafe_b64encode(config.encode()).decode().rstrip("=")
+
+    service = service_with_fakes(prepare_store(tmp_path), {(1, DEFAULT_EMAIL): [link]})
+
+    subscription = await service.build("123")
+
+    assert subscription.links == [link, "vless://external#External"]
+
+
+@pytest.mark.asyncio
 async def test_disabled_node_client_returns_no_links_and_no_error(tmp_path: Path) -> None:
     # The panel simply returns [] for a disabled client; no node error is reported.
     service = service_with_fakes(

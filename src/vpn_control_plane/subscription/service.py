@@ -183,8 +183,7 @@ class SubscriptionService:
                                     break
                         link_map: dict[str, str] = {}
                         for panel_link in link_list:
-                            fragment = unquote(urlsplit(panel_link).fragment)
-                            link_map.setdefault(fragment, panel_link)
+                            link_map.setdefault(_panel_link_remark(panel_link), panel_link)
                         node_link_by_remark[node.id] = link_map
                     except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
                         node_errors.append(f"node {node.id}: {exc}")
@@ -478,10 +477,34 @@ def _ensure_fragment_label(uri: str, label: str) -> str:
 def _relabel_fragment(uri: str, label: str) -> str:
     """Replace the URL fragment with the control-plane label (panel links carry the
     inbound remark as the fragment). If we have no label, keep the panel's fragment."""
-    if not label:
+    if not label or uri.lower().startswith(_AMNEZIAWG_SCHEME):
         return uri
     prefix = uri.partition("#")[0]
     return f"{prefix}#{quote(label, safe='')}"
+
+
+# AmneziaWG share links are ``vpn://<base64 wg config>``: the whole payload is the config,
+# so a ``#label`` suffix would corrupt the base64 the client decodes, and the inbound remark
+# arrives as a ``# <remark>`` comment inside that config instead of as a URL fragment.
+_AMNEZIAWG_SCHEME = "vpn://"
+
+
+def _panel_link_remark(uri: str) -> str:
+    """The inbound remark the panel keyed this share link by — its URL fragment, except for
+    AmneziaWG links, where it is a comment line inside the encoded WireGuard config."""
+    fragment = unquote(urlsplit(uri).fragment)
+    if fragment or not uri.lower().startswith(_AMNEZIAWG_SCHEME):
+        return fragment
+    payload = uri[len(_AMNEZIAWG_SCHEME) :]
+    try:
+        config = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    for line in config.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip()
+    return ""
 
 
 # Query parameters defined by the official Hysteria2 URI scheme
