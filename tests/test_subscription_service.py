@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import tarfile
@@ -400,6 +401,117 @@ async def test_partial_node_failure_keeps_available_links(tmp_path: Path) -> Non
 
     assert subscription.links == ["vless://external#External", NODE_2_LINK]
     assert subscription.node_errors
+
+
+@pytest.mark.asyncio
+async def test_node_fetches_start_concurrently_and_time_out_without_delaying_external_links(tmp_path: Path) -> None:
+    started: set[int] = set()
+    both_started = asyncio.Event()
+    clients: list[HangingPanelClient] = []
+
+    class HangingPanelClient:
+        def __init__(self, node: NodeRecord) -> None:
+            self.node = node
+            self.closed = False
+            clients.append(self)
+
+        async def list_inbounds(self) -> list[XuiInbound]:
+            started.add(self.node.id)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def get_client_links(self, email: str) -> list[str]:
+            raise AssertionError("links must not be requested after the node budget expires")
+
+        async def get_client_traffic(self, email: str) -> JsonObject | None:
+            raise AssertionError("traffic must not be requested after the node budget expires")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    store = prepare_store(
+        tmp_path,
+        inbounds=[
+            {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+            {"label": "External", "uri": "vless://external#External"},
+            {"label": "Two", "nodeId": 2, "xuiInboundId": 2},
+        ],
+    )
+    service = SubscriptionService(
+        store,
+        public_base_url="https://resetand.my.id:2096/sub/",
+        node_client_factory=cast(Any, HangingPanelClient),
+        node_fetch_timeout_seconds=0.02,
+    )
+
+    build_task = asyncio.create_task(service.build("123"))
+    await asyncio.wait_for(both_started.wait(), timeout=0.1)
+    subscription = await asyncio.wait_for(build_task, timeout=0.1)
+
+    assert subscription.links == ["vless://external#External"]
+    assert len(subscription.node_errors) == 2
+    assert all("timed out" in error for error in subscription.node_errors)
+    assert all(client.closed for client in clients)
+
+
+@pytest.mark.asyncio
+async def test_slow_traffic_does_not_discard_links_already_fetched_from_node(tmp_path: Path) -> None:
+    class SlowTrafficClient(FakeXuiClient):
+        async def get_client_traffic(self, email: str) -> JsonObject | None:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    service = SubscriptionService(
+        prepare_store(tmp_path),
+        public_base_url="https://resetand.my.id:2096/sub/",
+        node_client_factory=cast(
+            Any, lambda node: SlowTrafficClient(node, {DEFAULT_EMAIL: [NODE_1_LINK_ONE, NODE_1_LINK_TWO]})
+        ),
+        node_fetch_timeout_seconds=0.02,
+    )
+
+    subscription = await asyncio.wait_for(service.build("123"), timeout=0.1)
+
+    assert subscription.links == [NODE_1_LINK_ONE, "vless://external#External", NODE_1_LINK_TWO]
+    assert subscription.node_errors == ()
+
+
+@pytest.mark.asyncio
+async def test_client_factory_and_close_failures_do_not_break_partial_subscription(tmp_path: Path) -> None:
+    clients: list[FakeXuiClient] = []
+
+    class BrokenCloseClient(FakeXuiClient):
+        async def close(self) -> None:
+            await asyncio.Event().wait()
+
+    def factory(node: NodeRecord) -> FakeXuiClient:
+        if node.id == 2:
+            raise RuntimeError("cannot create client")
+        client = BrokenCloseClient(node, {DEFAULT_EMAIL: [NODE_1_LINK_ONE]})
+        clients.append(client)
+        return client
+
+    service = SubscriptionService(
+        prepare_store(
+            tmp_path,
+            inbounds=[
+                {"label": "One", "nodeId": 1, "xuiInboundId": 1},
+                {"label": "External", "uri": "vless://external#External"},
+                {"label": "Two", "nodeId": 2, "xuiInboundId": 2},
+            ],
+        ),
+        public_base_url="https://resetand.my.id:2096/sub/",
+        node_client_factory=cast(Any, factory),
+        node_fetch_timeout_seconds=0.02,
+    )
+
+    subscription = await asyncio.wait_for(service.build("123"), timeout=0.1)
+
+    assert subscription.links == [NODE_1_LINK_ONE, "vless://external#External"]
+    assert subscription.node_errors == ("node 2: cannot create client",)
+    assert len(clients) == 1
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -72,6 +73,14 @@ class SubscriptionTraffic:
             self.expire = max(self.expire or 0, expire)
 
 
+@dataclass(frozen=True)
+class _NodeSubscriptionData:
+    remark_by_inbound: dict[int, str] = field(default_factory=dict)
+    link_by_remark: dict[str, str] = field(default_factory=dict)
+    traffic: object = None
+    error: str | None = None
+
+
 def normalize_subscription_base_url(value: str) -> str:
     return value.rstrip("/")
 
@@ -109,11 +118,13 @@ class SubscriptionService:
         token_salt: str | None = None,
         node_client_factory: Callable[[NodeRecord], XuiNodeClient] | None = None,
         resolved_inbounds_path: Path | str | None = None,
+        node_fetch_timeout_seconds: float = 4.0,
     ) -> None:
         self._store = store
         self._public_base_url = normalize_subscription_base_url(public_base_url)
         self._token_salt = token_salt or None
         self._node_client_factory = node_client_factory or XuiNodeClient
+        self._node_fetch_timeout_seconds = node_fetch_timeout_seconds
         self._resolved_inbounds_store = (
             ResolvedInboundsStore(resolved_inbounds_path) if resolved_inbounds_path is not None else None
         )
@@ -136,18 +147,41 @@ class SubscriptionService:
 
         catalog = build_inbound_catalog(state)
         resolved_inbounds = self._resolved_inbounds_store.load() if self._resolved_inbounds_store is not None else {}
+        requested_tags = effective_inbound_tags(state, client)
+        requested_nodes: dict[int, tuple[NodeRecord, NodeInboundRecord]] = {}
+        for tag in requested_tags:
+            catalog_inbound = catalog[tag]
+            if isinstance(catalog_inbound, NodeCatalogInbound):
+                requested_nodes.setdefault(catalog_inbound.node.id, (catalog_inbound.node, catalog_inbound.inbound))
+
         node_clients: dict[int, XuiNodeClient] = {}
-        # Per node, fetched once: {xui_inbound_id: remark} and {remark: panel link}.
-        node_remark_by_inbound: dict[int, dict[int, str]] = {}
-        node_link_by_remark: dict[int, dict[str, str]] = {}
-        node_traffic_done: set[int] = set()
+        node_data: dict[int, _NodeSubscriptionData] = {}
         node_errors: list[str] = []
         links: list[str] = []
         traffic = SubscriptionTraffic()
         email = client_email(client.id)
 
         try:
-            for tag in effective_inbound_tags(state, client):
+            fetch_node_ids: list[int] = []
+            fetch_tasks: list[asyncio.Task[_NodeSubscriptionData]] = []
+            for node_id, (node, inbound) in requested_nodes.items():
+                try:
+                    node_client = self._node_client_factory(node)
+                except Exception as exc:  # noqa: BLE001 - isolate a broken node client.
+                    node_data[node_id] = _NodeSubscriptionData(error=str(exc))
+                    continue
+                node_clients[node_id] = node_client
+                fetch_node_ids.append(node_id)
+                fetch_tasks.append(asyncio.create_task(self._fetch_node_data(node, inbound, node_client, email)))
+            fetched = await asyncio.gather(*fetch_tasks)
+            node_data.update(zip(fetch_node_ids, fetched, strict=True))
+            for node_id, data in node_data.items():
+                if data.error is not None:
+                    node_errors.append(f"node {node_id}: {data.error}")
+                elif data.traffic is not None:
+                    traffic.add(data.traffic)
+
+            for tag in requested_tags:
                 catalog_inbound = catalog[tag]
                 if isinstance(catalog_inbound, ExternalCatalogInbound):
                     external_inbound = catalog_inbound.inbound
@@ -162,60 +196,15 @@ class SubscriptionService:
                 node = catalog_inbound.node
                 node_inbound = catalog_inbound.inbound
 
-                node_client = node_clients.get(node.id)
-                if node_client is None:
-                    node_client = self._node_client_factory(node)
-                    node_clients[node.id] = node_client
-
-                # Fetch the node's inbound remarks and the client's links once. The panel
-                # returns ALL of a client's links for the node (it does not filter by our
-                # tags), keyed only by inbound remark in the URL fragment — so we build a
-                # remark->link map and select per allowed inbound below.
-                if node.id not in node_link_by_remark:
-                    try:
-                        inbounds = await node_client.list_inbounds()
-                        node_remark_by_inbound[node.id] = {ib.id: str(ib.raw.get("remark") or "") for ib in inbounds}
-                        link_list = await node_client.get_client_links(email)
-                        if not link_list:
-                            for fb_email in _fallback_client_emails(node, node_inbound):
-                                link_list = await node_client.get_client_links(fb_email)
-                                if link_list:
-                                    break
-                        link_map: dict[str, str] = {}
-                        for panel_link in link_list:
-                            link_map.setdefault(_panel_link_remark(panel_link), panel_link)
-                        node_link_by_remark[node.id] = link_map
-                    except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
-                        node_errors.append(f"node {node.id}: {exc}")
-                        node_remark_by_inbound[node.id] = {}
-                        node_link_by_remark[node.id] = {}
-
                 # Emit ONLY this allowed inbound's link, relabelled with our friendly label
                 # (the panel fragment is the inbound remark, not our control-plane label).
-                remark = node_remark_by_inbound.get(node.id, {}).get(node_inbound.xui_inbound_id)
-                link = node_link_by_remark.get(node.id, {}).get(remark) if remark else None
+                data = node_data[node.id]
+                remark = data.remark_by_inbound.get(node_inbound.xui_inbound_id)
+                link = data.link_by_remark.get(remark) if remark else None
                 if link:
                     links.append(_normalize_link(_relabel_fragment(link, node_inbound.label)))
-
-                # Best-effort traffic collection (once per node) — errors are silent so link delivery is unaffected.
-                if node.id not in node_traffic_done:
-                    node_traffic_done.add(node.id)
-                    try:
-                        traffic_obj = await node_client.get_client_traffic(email)
-                        if not traffic_obj:
-                            for fb_email in _fallback_client_emails(node, node_inbound):
-                                traffic_obj = await node_client.get_client_traffic(fb_email)
-                                if traffic_obj:
-                                    break
-                        if traffic_obj:
-                            traffic.add(traffic_obj)
-                    except Exception:  # noqa: BLE001 - traffic is non-fatal
-                        pass
         finally:
-            for node_client in node_clients.values():
-                close = getattr(node_client, "close", None)
-                if close is not None:
-                    await close()
+            await asyncio.gather(*(self._close_node_client(client) for client in node_clients.values()))
 
         return BuiltSubscription(
             client=client,
@@ -225,6 +214,57 @@ class SubscriptionService:
             subscription_userinfo=_build_subscription_userinfo(state.subscription.subscription_userinfo, traffic),
             node_errors=tuple(node_errors),
         )
+
+    async def _fetch_node_data(
+        self,
+        node: NodeRecord,
+        inbound: NodeInboundRecord,
+        client: XuiNodeClient,
+        email: str,
+    ) -> _NodeSubscriptionData:
+        remark_by_inbound: dict[int, str] = {}
+        link_by_remark: dict[str, str] = {}
+        links_fetched = False
+        try:
+            async with asyncio.timeout(self._node_fetch_timeout_seconds):
+                inbounds = await client.list_inbounds()
+                remark_by_inbound = {ib.id: str(ib.raw.get("remark") or "") for ib in inbounds}
+                link_list = await client.get_client_links(email)
+                if not link_list:
+                    for fallback_email in _fallback_client_emails(node, inbound):
+                        link_list = await client.get_client_links(fallback_email)
+                        if link_list:
+                            break
+                link_by_remark = {}
+                for panel_link in link_list:
+                    link_by_remark.setdefault(_panel_link_remark(panel_link), panel_link)
+                links_fetched = True
+                try:
+                    traffic_obj = await client.get_client_traffic(email)
+                    if not traffic_obj:
+                        for fallback_email in _fallback_client_emails(node, inbound):
+                            traffic_obj = await client.get_client_traffic(fallback_email)
+                            if traffic_obj:
+                                break
+                except Exception:  # noqa: BLE001 - traffic is non-fatal
+                    traffic_obj = None
+                return _NodeSubscriptionData(remark_by_inbound, link_by_remark, traffic_obj)
+        except TimeoutError:
+            if links_fetched:
+                return _NodeSubscriptionData(remark_by_inbound, link_by_remark)
+            return _NodeSubscriptionData(error=f"timed out after {self._node_fetch_timeout_seconds:g}s")
+        except Exception as exc:  # noqa: BLE001 - keep partial subscriptions available when one node is down.
+            return _NodeSubscriptionData(error=str(exc))
+
+    async def _close_node_client(self, client: XuiNodeClient) -> None:
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+        try:
+            async with asyncio.timeout(self._node_fetch_timeout_seconds):
+                await close()
+        except Exception:  # noqa: BLE001 - cleanup must not break a ready subscription.
+            pass
 
     def _find_client(self, clients: Sequence[ClientRecord], requested_sub_id: str) -> ClientRecord | None:
         for client in clients:
