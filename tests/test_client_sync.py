@@ -102,6 +102,8 @@ def build_state(clients: list[JsonObject]) -> JsonObject:
         "externalInbounds": [],
         "clients": clients,
         "defaultClientInboundTags": ["n1a", "n2a"],
+        # No abroad inbounds by default, so each test syncs exactly the client's regular set.
+        "defaultClientAbroadInboundTags": [],
         "subscription": {},
     }
 
@@ -196,6 +198,22 @@ async def test_attaches_missing_inbounds_without_field_update(tmp_path: Path) ->
     assert report.attached == 1
     assert report.updated == 0
     assert node1.attached == [(client_email("123"), [2])]
+
+
+@pytest.mark.asyncio
+async def test_syncs_abroad_inbounds_alongside_regular_ones(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        [{"id": "123", "comment": "Alice", "subId": "sub-123", "inboundTags": ["n1a"], "abroadInboundTags": ["n2a"]}],
+    )
+    node1 = FakeNodeClient(inbounds=[inbound(1)], clients=[])
+    node2 = FakeNodeClient(inbounds=[inbound(1)], clients=[])
+
+    report = await make_service(store, {1: node1, 2: node2}).sync()
+
+    assert report.created == 2
+    assert node1.added[0][1] == [1]
+    assert node2.added[0][1] == [1]
 
 
 @pytest.mark.asyncio

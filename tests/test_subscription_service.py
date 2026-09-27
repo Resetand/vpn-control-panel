@@ -809,6 +809,25 @@ async def test_abroad_subscription_drops_happ_routing_and_marks_title(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_abroad_subscription_serves_abroad_inbound_tags(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[{"id": "123", "comment": "Existing", "abroadInboundTags": ["two"]}],
+        inbounds=[
+            {"tag": "one", "label": "One", "nodeId": 1, "xuiInboundId": 1},
+            {"tag": "two", "label": "Two", "nodeId": 1, "xuiInboundId": 2},
+        ],
+    )
+    service = service_with_fakes(store, DEFAULT_NODE_LINKS)
+
+    regular = await service.build("123")
+    abroad = await service.build("123", abroad=True)
+
+    assert regular.links == [NODE_1_LINK_ONE, NODE_1_LINK_TWO]
+    assert abroad.links == [NODE_1_LINK_TWO]
+
+
+@pytest.mark.asyncio
 async def test_abroad_subscription_title_without_configured_title(tmp_path: Path) -> None:
     service = service_with_fakes(prepare_store(tmp_path), DEFAULT_NODE_LINKS)
 

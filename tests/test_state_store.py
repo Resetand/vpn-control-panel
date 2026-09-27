@@ -12,7 +12,9 @@ from vpn_control_plane.data import (
     NodeRecord,
     StateValidationError,
     SubscriptionMetadata,
+    effective_abroad_inbound_tags,
     effective_inbound_tags,
+    provisioned_inbound_tags,
 )
 
 
@@ -102,6 +104,49 @@ def test_client_inbound_tags_override_defaults(tmp_path: Path, monkeypatch: pyte
     assert effective_inbound_tags(loaded, loaded.clients[0]) == ["extra"]
 
 
+@pytest.mark.parametrize(
+    ("global_abroad", "client_fields", "expected"),
+    [
+        (None, {}, ["eu", "extra"]),
+        (None, {"inboundTags": ["extra"]}, ["eu", "extra"]),
+        (["extra"], {}, ["extra"]),
+        (["extra"], {"inboundTags": ["eu"]}, ["extra"]),
+        (["extra"], {"abroadInboundTags": ["eu"]}, ["eu"]),
+        (None, {"inboundTags": ["extra"], "abroadInboundTags": ["eu"]}, ["eu"]),
+    ],
+)
+def test_abroad_inbound_tags_fall_back_from_client_to_global_abroad_to_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    global_abroad: list[str] | None,
+    client_fields: dict[str, object],
+    expected: list[str],
+) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    state = valid_state()
+    state["clients"] = [{"id": "123", "comment": "Client", **client_fields}]
+    if global_abroad is not None:
+        state["defaultClientAbroadInboundTags"] = global_abroad
+    write_json(tmp_path / "data.json", state)
+
+    loaded = ControlPlaneStore(tmp_path / "data.json").load_state()
+
+    assert effective_abroad_inbound_tags(loaded, loaded.clients[0]) == expected
+
+
+def test_provisioned_inbound_tags_cover_regular_and_abroad_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    state = valid_state()
+    state["clients"] = [{"id": "123", "comment": "Client", "inboundTags": ["extra"], "abroadInboundTags": ["eu"]}]
+    write_json(tmp_path / "data.json", state)
+
+    loaded = ControlPlaneStore(tmp_path / "data.json").load_state()
+
+    assert provisioned_inbound_tags(loaded, loaded.clients[0]) == ["extra", "eu"]
+
+
 def test_node_monitoring_defaults_to_enabled() -> None:
     node = NodeRecord.model_validate({"id": 1, "host": "node.example.test", "port": 443, "apiToken": "token"})
 
@@ -172,6 +217,13 @@ def test_rejects_unresolved_env_template_with_file_context(tmp_path: Path) -> No
             "duplicate inbound tag",
         ),
         (lambda state: state.update({"defaultClientInboundTags": ["missing"]}), "unknown inbound tag"),
+        (lambda state: state.update({"defaultClientAbroadInboundTags": ["missing"]}), "unknown inbound tag"),
+        (
+            lambda state: state.update(
+                {"clients": [{"id": "123", "comment": "Bad", "abroadInboundTags": ["missing"]}]}
+            ),
+            "unknown inbound tag",
+        ),
         (
             lambda state: state.update({"clients": [{"id": "123", "comment": "Bad", "inboundTags": ["missing"]}]}),
             "unknown inbound tag",

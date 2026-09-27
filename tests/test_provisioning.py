@@ -24,8 +24,11 @@ def prepare_store(
     *,
     clients: list[JsonObject] | None = None,
     inbounds: list[JsonObject] | None = None,
+    abroad_tags: list[str] | None = None,
 ) -> ControlPlaneStore:
     state = build_state(clients=clients or [], inbounds=inbounds)
+    if abroad_tags is not None:
+        state["defaultClientAbroadInboundTags"] = abroad_tags
     write_json(tmp_path / "data.json", state)
     return ControlPlaneStore(tmp_path / "data.json")
 
@@ -300,6 +303,7 @@ async def test_explicit_client_inbound_tags_restrict_provisioning_scope(tmp_path
             {"tag": "default", "label": "Default", "nodeId": 1, "xuiInboundId": 1},
             {"tag": "personal", "label": "Personal", "nodeId": 2, "xuiInboundId": 2},
         ],
+        abroad_tags=[],
     )
     service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
 
@@ -309,6 +313,47 @@ async def test_explicit_client_inbound_tags_restrict_provisioning_scope(tmp_path
     assert 1 not in clients  # node 1 not touched
     assert clients[2].add_calls[0][0]["email"] == client_email("123")
     assert result.client.inbound_tags == ["personal"]
+
+
+@pytest.mark.asyncio
+async def test_restricted_client_is_provisioned_on_default_inbounds_its_abroad_link_falls_back_to(
+    tmp_path: Path,
+) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[{"id": "123", "comment": "Existing", "inboundTags": ["personal"]}],
+        inbounds=[
+            {"tag": "default", "label": "Default", "nodeId": 1, "xuiInboundId": 1},
+            {"tag": "personal", "label": "Personal", "nodeId": 2, "xuiInboundId": 2},
+        ],
+    )
+    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
+
+    result = await service.ensure_client("123", comment="Existing")
+
+    assert result.created == 2
+    assert clients[1].add_calls[0][1] == [1]
+    assert clients[2].add_calls[0][1] == [2]
+
+
+@pytest.mark.asyncio
+async def test_abroad_inbound_tags_are_provisioned_and_kept_on_the_record(tmp_path: Path) -> None:
+    store = prepare_store(
+        tmp_path,
+        clients=[{"id": "123", "comment": "Existing", "inboundTags": ["default"], "abroadInboundTags": ["abroad"]}],
+        inbounds=[
+            {"tag": "default", "label": "Default", "nodeId": 1, "xuiInboundId": 1},
+            {"tag": "abroad", "label": "Abroad", "nodeId": 2, "xuiInboundId": 2},
+        ],
+    )
+    service, clients = service_with_fakes(store, {1: [inbound(1, "vless")], 2: [inbound(2, "vless")]})
+
+    result = await service.ensure_client("123", comment="Existing")
+
+    assert clients[1].add_calls[0][1] == [1]
+    assert clients[2].add_calls[0][1] == [2]
+    assert result.client.abroad_inbound_tags == ["abroad"]
+    assert store.load_state().clients[0].abroad_inbound_tags == ["abroad"]
 
 
 @pytest.mark.asyncio

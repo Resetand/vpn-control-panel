@@ -12,7 +12,7 @@ from vpn_control_plane.data import (
     NodeCatalogInbound,
     NodeRecord,
     build_inbound_catalog,
-    effective_inbound_tags,
+    provisioned_inbound_tags,
 )
 from vpn_control_plane.xui import XuiInbound, XuiNodeClient
 
@@ -168,7 +168,7 @@ class ProvisioningService:
 
         # Group target node-inbounds by node.
         node_inbounds: dict[int, tuple[NodeRecord, list[NodeCatalogInbound]]] = {}
-        for tag in effective_inbound_tags(state, candidate_record):
+        for tag in provisioned_inbound_tags(state, candidate_record):
             catalog_inbound = catalog[tag]
             if not isinstance(catalog_inbound, NodeCatalogInbound):
                 continue
@@ -270,6 +270,7 @@ class ProvisioningService:
             subId=sub_id,
             legacySubId=_legacy_sub_id(existing_record),
             inboundTags=existing_record.inbound_tags if existing_record else None,
+            abroadInboundTags=existing_record.abroad_inbound_tags if existing_record else None,
         )
         next_clients = [client for client in clients if client.id != client_id]
         next_clients.append(record)

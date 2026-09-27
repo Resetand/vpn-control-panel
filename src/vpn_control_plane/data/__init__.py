@@ -11,8 +11,10 @@ from vpn_control_plane.data.models import (
     NodeRecord,
     SubscriptionMetadata,
     build_inbound_catalog,
+    effective_abroad_inbound_tags,
     effective_inbound_tags,
     parse_external_subscription_ref,
+    provisioned_inbound_tags,
 )
 from vpn_control_plane.data.store import ControlPlaneStore, StateValidationError
 
@@ -31,6 +33,8 @@ __all__ = [
     "StateValidationError",
     "SubscriptionMetadata",
     "build_inbound_catalog",
+    "effective_abroad_inbound_tags",
     "effective_inbound_tags",
     "parse_external_subscription_ref",
+    "provisioned_inbound_tags",
 ]

@@ -26,6 +26,7 @@ from vpn_control_plane.data import (
     NodeRecord,
     SubscriptionMetadata,
     build_inbound_catalog,
+    effective_abroad_inbound_tags,
     effective_inbound_tags,
 )
 from vpn_control_plane.external_subscriptions.cache import ResolvedInboundsStore, resolve_reference
@@ -158,7 +159,7 @@ class SubscriptionService:
 
         catalog = build_inbound_catalog(state)
         resolved_inbounds = self._resolved_inbounds_store.load() if self._resolved_inbounds_store is not None else {}
-        requested_tags = effective_inbound_tags(state, client)
+        requested_tags = (effective_abroad_inbound_tags if abroad else effective_inbound_tags)(state, client)
         requested_nodes: dict[int, tuple[NodeRecord, NodeInboundRecord]] = {}
         for tag in requested_tags:
             catalog_inbound = catalog[tag]

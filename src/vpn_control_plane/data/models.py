@@ -120,6 +120,7 @@ class ClientRecord(StateModel):
     sub_id: str | None = Field(default=None, alias="subId")
     legacy_sub_id: str | None = Field(default=None, alias="legacySubId")
     inbound_tags: list[str] | None = Field(default=None, alias="inboundTags")
+    abroad_inbound_tags: list[str] | None = Field(default=None, alias="abroadInboundTags")
 
     @field_validator("id", "telegram_id", "sub_id", "legacy_sub_id")
     @classmethod
@@ -128,7 +129,7 @@ class ClientRecord(StateModel):
             return None
         return _strip_nonempty(value, "identifier")
 
-    @field_validator("inbound_tags")
+    @field_validator("inbound_tags", "abroad_inbound_tags")
     @classmethod
     def strip_inbound_tags(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
@@ -168,11 +169,14 @@ class ControlPlaneState(StateModel):
     )
     clients: list[ClientRecord] = Field(default_factory=list)
     default_client_inbound_tags: list[str] = Field(default_factory=list, alias="defaultClientInboundTags")
+    default_client_abroad_inbound_tags: list[str] | None = Field(default=None, alias="defaultClientAbroadInboundTags")
     subscription: SubscriptionMetadata = Field(default_factory=SubscriptionMetadata)
 
-    @field_validator("default_client_inbound_tags")
+    @field_validator("default_client_inbound_tags", "default_client_abroad_inbound_tags")
     @classmethod
-    def strip_default_tags(cls, value: list[str]) -> list[str]:
+    def strip_default_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
         return [_strip_nonempty(tag, "inbound tag") for tag in value]
 
     @model_validator(mode="after")
@@ -214,9 +218,17 @@ class ControlPlaneState(StateModel):
                     raise ValueError(f"externalInbounds[{external_inbound.tag}].uri has invalid regex: {exc}") from exc
 
         self._validate_tag_list("defaultClientInboundTags", self.default_client_inbound_tags, known_tags)
+        if self.default_client_abroad_inbound_tags is not None:
+            self._validate_tag_list(
+                "defaultClientAbroadInboundTags", self.default_client_abroad_inbound_tags, known_tags
+            )
         for client in self.clients:
             if client.inbound_tags is not None:
                 self._validate_tag_list(f"clients[{client.id}].inboundTags", client.inbound_tags, known_tags)
+            if client.abroad_inbound_tags is not None:
+                self._validate_tag_list(
+                    f"clients[{client.id}].abroadInboundTags", client.abroad_inbound_tags, known_tags
+                )
         return self
 
     @staticmethod
@@ -258,6 +270,22 @@ def effective_inbound_tags(state: ControlPlaneState, client: ClientRecord) -> li
     if client.inbound_tags is not None:
         return list(client.inbound_tags)
     return list(state.default_client_inbound_tags)
+
+
+def effective_abroad_inbound_tags(state: ControlPlaneState, client: ClientRecord) -> list[str]:
+    """Inbounds of the abroad subscription. The client's regular inboundTags are deliberately
+    ignored: abroad falls back to the global abroad list, then to the global default list."""
+    if client.abroad_inbound_tags is not None:
+        return list(client.abroad_inbound_tags)
+    if state.default_client_abroad_inbound_tags is not None:
+        return list(state.default_client_abroad_inbound_tags)
+    return list(state.default_client_inbound_tags)
+
+
+def provisioned_inbound_tags(state: ControlPlaneState, client: ClientRecord) -> list[str]:
+    """Every inbound the client must exist on: both its regular and abroad subscriptions."""
+    tags = effective_inbound_tags(state, client)
+    return tags + [tag for tag in effective_abroad_inbound_tags(state, client) if tag not in tags]
 
 
 @dataclass(frozen=True)

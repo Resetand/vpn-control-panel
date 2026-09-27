@@ -11,7 +11,7 @@ from vpn_control_plane.data import (
     NodeCatalogInbound,
     NodeRecord,
     build_inbound_catalog,
-    effective_inbound_tags,
+    provisioned_inbound_tags,
 )
 from vpn_control_plane.provisioning import (
     build_client_payload,
@@ -84,7 +84,7 @@ class ClientSyncService:
         for client in state.clients:
             per_node: dict[int, list[int]] = {}
             nodes_by_id: dict[int, NodeRecord] = {}
-            for tag in effective_inbound_tags(state, client):
+            for tag in provisioned_inbound_tags(state, client):
                 catalog_inbound = catalog.get(tag)
                 if not isinstance(catalog_inbound, NodeCatalogInbound):
                     continue
