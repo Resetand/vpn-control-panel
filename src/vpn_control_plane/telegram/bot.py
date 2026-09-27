@@ -29,9 +29,10 @@ from vpn_control_plane.data import (
 from vpn_control_plane.provisioning import ProvisioningError, ProvisioningResult, ProvisioningService
 from vpn_control_plane.subscription import SubscriptionService
 from vpn_control_plane.telegram.setup_messages import (
+    SUBSCRIPTION_CAPTION,
     build_abroad_instructions,
     build_setup_instructions,
-    build_subscription_caption,
+    build_subscription_url_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,11 +169,7 @@ async def handle_abroad(message: Message, services: TelegramBotServices, bot: Bo
     if result is None:
         return
     subscription_url = services.subscription.abroad_public_url_for_client(result.client)
-    await message.answer_photo(
-        BufferedInputFile(generate_qr_png(subscription_url), filename="subscription_abroad_qr.png"),
-        caption=build_subscription_caption(subscription_url),
-        parse_mode="HTML",
-    )
+    await send_subscription_key(message, subscription_url, qr_filename="subscription_abroad_qr.png")
     await message.answer(build_abroad_instructions(), parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -348,12 +345,16 @@ async def send_subscription_material(
     result: ProvisioningResult,
 ) -> None:
     subscription_url = services.subscription.public_url_for_client(result.client)
-    await message.answer_photo(
-        BufferedInputFile(generate_qr_png(subscription_url), filename="subscription_qr.png"),
-        caption=build_subscription_caption(subscription_url),
-        parse_mode="HTML",
-    )
+    await send_subscription_key(message, subscription_url, qr_filename="subscription_qr.png")
     await message.answer(build_setup_instructions(), parse_mode="HTML", disable_web_page_preview=True)
+
+
+async def send_subscription_key(message: Message, subscription_url: str, *, qr_filename: str) -> None:
+    await message.answer_photo(
+        BufferedInputFile(generate_qr_png(subscription_url), filename=qr_filename),
+        caption=SUBSCRIPTION_CAPTION,
+    )
+    await message.answer(build_subscription_url_message(subscription_url), parse_mode="HTML")
 
 
 def generate_qr_png(data: str) -> bytes:

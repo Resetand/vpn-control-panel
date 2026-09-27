@@ -8,8 +8,12 @@ from typing import cast
 PLATFORM_ORDER = ("ios", "android", "windows", "macos")
 
 
-def build_subscription_caption(subscription_url: str) -> str:
-    return "\n".join(["🔑 Ваш ключ-ссылка:", f"<code>{html.escape(subscription_url)}</code>"])
+SUBSCRIPTION_CAPTION = "🔑 Ваш ключ-ссылка — в следующем сообщении, нажмите на нее, чтобы скопировать 👇"
+
+
+def build_subscription_url_message(subscription_url: str) -> str:
+    # The link travels alone so that copying the message copies nothing but the link.
+    return f"<code>{html.escape(subscription_url)}</code>"
 
 
 def build_setup_instructions() -> str:

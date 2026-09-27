@@ -178,6 +178,13 @@ def services(
     )
 
 
+def assert_subscription_url_sent_alone(message: FakeMessage, url: str) -> None:
+    """The key link arrives as its own message so it can be copied without extra text."""
+    assert url not in message.photos[0]["kwargs"]["caption"]
+    url_messages = [answer for answer in message.answers if url in answer["text"]]
+    assert url_messages == [{"text": f"<code>{url}</code>", "kwargs": {"parse_mode": "HTML"}}]
+
+
 def test_access_control_helpers(tmp_path: Path) -> None:
     app_settings = settings(tmp_path)
 
@@ -332,7 +339,7 @@ async def test_start_provisions_allowed_private_user_and_sends_url_qr_and_instru
     assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
     assert len(message.photos) == 1
     token = build_public_subscription_token("100", "global-salt")
-    assert f"https://example.test/s/{token}" in message.photos[0]["kwargs"]["caption"]
+    assert_subscription_url_sent_alone(message, f"https://example.test/s/{token}")
     assert message.answers[-1]["kwargs"] == {"parse_mode": "HTML", "disable_web_page_preview": True}
 
 
@@ -346,7 +353,7 @@ async def test_abroad_provisions_allowed_user_and_sends_abroad_url(tmp_path: Pat
     assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
     token = build_public_subscription_token("100", "global-salt")
     assert len(message.photos) == 1
-    assert f"https://example.test/s/abroad/{token}" in message.photos[0]["kwargs"]["caption"]
+    assert_subscription_url_sent_alone(message, f"https://example.test/s/abroad/{token}")
     assert "вместо" in message.answers[-1]["text"]
 
 
@@ -459,7 +466,7 @@ async def test_issue_creates_manual_client_with_comment_and_sends_material(tmp_p
 
     assert provisioning.issue_calls == ["Router kitchen"]
     token = build_public_subscription_token("manual-1", "global-salt")
-    assert f"https://example.test/s/{token}" in message.photos[0]["kwargs"]["caption"]
+    assert_subscription_url_sent_alone(message, f"https://example.test/s/{token}")
 
 
 @pytest.mark.asyncio
