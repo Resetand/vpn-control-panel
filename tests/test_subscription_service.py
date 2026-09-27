@@ -801,11 +801,11 @@ async def test_abroad_subscription_drops_happ_routing_and_marks_title(tmp_path: 
     response = render_subscription_response(abroad)
 
     assert abroad.links == regular.links
-    assert abroad.public_url == "https://resetand.my.id:2096/sub/123/abroad"
+    assert abroad.public_url == "https://resetand.my.id:2096/sub/abroad/123"
     assert "routing" not in response.headers
     assert response.headers["routing-enable"] == "false"
     assert response.headers["profile-title"] == "base64:" + base64.b64encode(b"Family VPN (Abroad)").decode()
-    assert response.headers["profile-web-page-url"] == "https://resetand.my.id:2096/sub/123/abroad"
+    assert response.headers["profile-web-page-url"] == "https://resetand.my.id:2096/sub/abroad/123"
 
 
 @pytest.mark.asyncio
@@ -861,7 +861,7 @@ def test_abroad_route_serves_same_links_without_routing(tmp_path: Path) -> None:
     token = build_public_subscription_token("personal-token", "global-salt")
 
     regular = client.get(f"/s/{token}")
-    abroad = client.get(f"/s/{token}/abroad")
+    abroad = client.get(f"/s/abroad/{token}")
 
     assert abroad.status_code == 200
     assert abroad.text == regular.text
@@ -874,11 +874,11 @@ def test_abroad_route_serves_same_links_without_routing(tmp_path: Path) -> None:
 def test_abroad_route_points_legacy_url_to_canonical_abroad_url(tmp_path: Path) -> None:
     client = abroad_route_client(tmp_path)
     token = build_public_subscription_token("personal-token", "global-salt")
-    abroad_url = f"https://example.test/s/{token}/abroad"
+    abroad_url = f"https://example.test/s/abroad/{token}"
 
-    plain = client.get("/sub/9f3aKx7PqLm2Zr8/123/abroad")
-    unhashed = client.get("/s/personal-token/abroad")
-    html = client.get("/sub/123/abroad", headers={"accept": "text/html"}, follow_redirects=False)
+    plain = client.get("/sub/9f3aKx7PqLm2Zr8/abroad/123")
+    unhashed = client.get("/s/abroad/personal-token")
+    html = client.get("/sub/abroad/123", headers={"accept": "text/html"}, follow_redirects=False)
 
     assert plain.status_code == 200
     assert plain.headers["new-url"] == abroad_url
@@ -892,9 +892,9 @@ def test_abroad_route_json_view_exposes_abroad_url_and_title(tmp_path: Path) -> 
     client = abroad_route_client(tmp_path)
     token = build_public_subscription_token("personal-token", "global-salt")
 
-    payload = client.get(f"/s/{token}/abroad", headers={"accept": "application/json"}).json()
+    payload = client.get(f"/s/abroad/{token}", headers={"accept": "application/json"}).json()
 
-    assert payload["subscription"]["public_url"] == f"https://example.test/s/{token}/abroad"
+    assert payload["subscription"]["public_url"] == f"https://example.test/s/abroad/{token}"
     assert payload["subscription"]["title"] == "Family VPN (Abroad)"
 
 

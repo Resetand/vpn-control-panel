@@ -346,7 +346,7 @@ async def test_abroad_provisions_allowed_user_and_sends_abroad_url(tmp_path: Pat
     assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
     token = build_public_subscription_token("100", "global-salt")
     assert len(message.photos) == 1
-    assert f"https://example.test/s/{token}/abroad" in message.photos[0]["kwargs"]["caption"]
+    assert f"https://example.test/s/abroad/{token}" in message.photos[0]["kwargs"]["caption"]
     assert "вместо" in message.answers[-1]["text"]
 
 

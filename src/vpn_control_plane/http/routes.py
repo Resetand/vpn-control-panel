@@ -9,7 +9,7 @@ from vpn_control_plane.backup import DATA_BACKUP_FILE_NAME, build_data_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import ControlPlaneStore
 from vpn_control_plane.subscription import (
-    ABROAD_PATH_SUFFIX,
+    ABROAD_PATH_SEGMENT,
     BuiltSubscription,
     SubscriptionService,
     UnknownSubscriptionClientError,
@@ -65,9 +65,9 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
         return await respond(request, sub_id, accept, abroad=True)
 
     routes = _subscription_routes(settings)
-    # Abroad routes go first: the catch-all {sub_id:path} would otherwise swallow the suffix.
+    # Abroad routes go first: the catch-all {sub_id:path} would otherwise take "abroad/<token>" as a sub_id.
     for route in routes:
-        router.add_api_route(f"{route}{{sub_id}}{ABROAD_PATH_SUFFIX}", abroad_subscription, methods=["GET"])
+        router.add_api_route(f"{route}{ABROAD_PATH_SEGMENT}/{{sub_id}}", abroad_subscription, methods=["GET"])
     for route in routes:
         router.add_api_route(f"{route}{{sub_id:path}}", subscription, methods=["GET"])
     return router

@@ -32,7 +32,7 @@ from vpn_control_plane.external_subscriptions.cache import ResolvedInboundsStore
 from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.xui import XuiNodeClient
 
-ABROAD_PATH_SUFFIX = "/abroad"
+ABROAD_PATH_SEGMENT = "abroad"
 ABROAD_TITLE_SUFFIX = "Abroad"
 
 
@@ -139,7 +139,9 @@ class SubscriptionService:
         return build_public_subscription_url(self._public_base_url, self.public_token_for_client(client))
 
     def abroad_public_url_for_client(self, client: ClientRecord) -> str:
-        return self.public_url_for_client(client) + ABROAD_PATH_SUFFIX
+        return build_public_subscription_url(
+            f"{self._public_base_url}/{ABROAD_PATH_SEGMENT}", self.public_token_for_client(client)
+        )
 
     def is_public_token_for_client(self, token: str, client: ClientRecord) -> bool:
         return secrets.compare_digest(token.strip().strip("/"), self.public_token_for_client(client))
