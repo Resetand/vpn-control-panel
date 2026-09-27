@@ -28,7 +28,11 @@ from vpn_control_plane.data import (
 )
 from vpn_control_plane.provisioning import ProvisioningError, ProvisioningResult, ProvisioningService
 from vpn_control_plane.subscription import SubscriptionService
-from vpn_control_plane.telegram.setup_messages import build_setup_instructions, build_subscription_caption
+from vpn_control_plane.telegram.setup_messages import (
+    build_abroad_instructions,
+    build_setup_instructions,
+    build_subscription_caption,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,7 @@ ROUTING_PREFIXES = ("happ://routing/onadd/", "happ://routing/add/")
 ALLOWED_CHAT_MEMBER_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Получить VPN-доступ"),
+    BotCommand(command="abroad", description="Ссылка без маршрутизации (для жизни за границей)"),
     BotCommand(command="help", description="Краткая справка"),
     BotCommand(command="status", description="Проверить статус бота"),
     BotCommand(command="id", description="Показать ваш Telegram ID"),
@@ -79,6 +84,7 @@ def create_dispatcher(services: TelegramBotServices) -> Dispatcher:
     dispatcher = Dispatcher()
     dispatcher["services"] = services
     dispatcher.message.register(handle_start, CommandStart())
+    dispatcher.message.register(handle_abroad, Command("abroad"))
     dispatcher.message.register(handle_help, Command("help"))
     dispatcher.message.register(handle_status, Command("status"))
     dispatcher.message.register(handle_id, Command("id"))
@@ -152,17 +158,42 @@ def is_allowed_user(settings: Settings, user_id: int | str) -> bool:
 
 
 async def handle_start(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
+    result = await _provision_telegram_user(message, services, bot, command="/start")
+    if result is not None:
+        await send_subscription_material(message, services, result)
+
+
+async def handle_abroad(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:
+    result = await _provision_telegram_user(message, services, bot, command="/abroad")
+    if result is None:
+        return
+    subscription_url = services.subscription.abroad_public_url_for_client(result.client)
+    await message.answer_photo(
+        BufferedInputFile(generate_qr_png(subscription_url), filename="subscription_abroad_qr.png"),
+        caption=build_subscription_caption(subscription_url),
+        parse_mode="HTML",
+    )
+    await message.answer(build_abroad_instructions(), parse_mode="HTML", disable_web_page_preview=True)
+
+
+async def _provision_telegram_user(
+    message: Message,
+    services: TelegramBotServices,
+    bot: Bot | None,
+    *,
+    command: str,
+) -> ProvisioningResult | None:
     user = message.from_user
     if user is None:
-        return
+        return None
     await configure_chat_commands(bot, services.settings, user.id)
     if not _is_private_chat(message):
         await message.answer("Напишите мне в личные сообщения, чтобы получить VPN-доступ.")
-        return
+        return None
     if not await _is_user_allowed_for_start(services.settings, bot, user.id):
-        logger.info("Access denied for /start: user %s is not allowed", user.id)
+        logger.info("Access denied for %s: user %s is not allowed", command, user.id)
         await message.answer("Доступ запрещен. Обратитесь к администратору.")
-        return
+        return None
 
     await message.answer("Настраиваю VPN-доступ, подождите...")
     try:
@@ -174,9 +205,8 @@ async def handle_start(message: Message, services: TelegramBotServices, bot: Bot
     except ProvisioningError:
         logger.exception("Provisioning failed for Telegram user %s", user.id)
         await message.answer("Не удалось настроить VPN. Попробуйте позже или обратитесь к администратору.")
-        return
-
-    await send_subscription_material(message, services, result)
+        return None
+    return result
 
 
 async def handle_help(message: Message, services: TelegramBotServices, bot: Bot | None = None) -> None:

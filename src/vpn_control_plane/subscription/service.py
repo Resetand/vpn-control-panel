@@ -32,6 +32,9 @@ from vpn_control_plane.external_subscriptions.cache import ResolvedInboundsStore
 from vpn_control_plane.provisioning import client_email
 from vpn_control_plane.xui import XuiNodeClient
 
+ABROAD_PATH_SUFFIX = "/abroad"
+ABROAD_TITLE_SUFFIX = "Abroad"
+
 
 class SubscriptionError(RuntimeError):
     pass
@@ -135,10 +138,16 @@ class SubscriptionService:
     def public_url_for_client(self, client: ClientRecord) -> str:
         return build_public_subscription_url(self._public_base_url, self.public_token_for_client(client))
 
+    def abroad_public_url_for_client(self, client: ClientRecord) -> str:
+        return self.public_url_for_client(client) + ABROAD_PATH_SUFFIX
+
     def is_public_token_for_client(self, token: str, client: ClientRecord) -> bool:
         return secrets.compare_digest(token.strip().strip("/"), self.public_token_for_client(client))
 
-    async def build(self, requested_sub_id: str) -> BuiltSubscription:
+    async def build(self, requested_sub_id: str, *, abroad: bool = False) -> BuiltSubscription:
+        """Build a client's subscription. The abroad variant serves the same links for people
+        living outside Russia: Happ routing is switched off so all traffic goes through the chosen
+        server, and it lives at its own URL so Happ keeps it apart from the regular subscription."""
         requested_sub_id = requested_sub_id.strip().strip("/")
         state = self._store.load_state()
         client = self._find_client(state.clients, requested_sub_id)
@@ -206,11 +215,17 @@ class SubscriptionService:
         finally:
             await asyncio.gather(*(self._close_node_client(client) for client in node_clients.values()))
 
+        metadata = state.subscription
+        public_url = self.public_url_for_client(client)
+        if abroad:
+            metadata = _abroad_metadata(metadata)
+            public_url = self.abroad_public_url_for_client(client)
+
         return BuiltSubscription(
             client=client,
             links=links,
-            metadata=state.subscription,
-            public_url=self.public_url_for_client(client),
+            metadata=metadata,
+            public_url=public_url,
             subscription_userinfo=_build_subscription_userinfo(state.subscription.subscription_userinfo, traffic),
             node_errors=tuple(node_errors),
         )
@@ -278,6 +293,21 @@ class SubscriptionService:
                 if secrets.compare_digest(requested_sub_id, self.public_token_for_client(client)):
                     return client
         return None
+
+
+def _abroad_metadata(metadata: SubscriptionMetadata) -> SubscriptionMetadata:
+    title = _decode_base64_header(metadata.profile_title) if metadata.profile_title else ""
+    title = f"{title} ({ABROAD_TITLE_SUFFIX})" if title else ABROAD_TITLE_SUFFIX
+    return metadata.model_copy(update={"routing": None, "routing_enable": False, "profile_title": title})
+
+
+def _decode_base64_header(value: str) -> str:
+    if not value.startswith("base64:"):
+        return value
+    try:
+        return base64.b64decode(value.removeprefix("base64:"), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return value
 
 
 def _fallback_client_emails(node: NodeRecord, inbound: NodeInboundRecord) -> tuple[str, ...]:

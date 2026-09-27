@@ -9,6 +9,7 @@ from vpn_control_plane.backup import DATA_BACKUP_FILE_NAME, build_data_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import ControlPlaneStore
 from vpn_control_plane.subscription import (
+    ABROAD_PATH_SUFFIX,
     BuiltSubscription,
     SubscriptionService,
     UnknownSubscriptionClientError,
@@ -33,8 +34,8 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
         _authorize_backup(settings, authorization)
         return _backup_response(store)
 
-    async def subscription(request: Request, sub_id: str, accept: str | None = Header(default=None)) -> Response:
-        built_subscription = await _build_subscription_or_404(subscription_service, sub_id)
+    async def respond(request: Request, sub_id: str, accept: str | None, *, abroad: bool) -> Response:
+        built_subscription = await _build_subscription_or_404(subscription_service, sub_id, abroad=abroad)
         should_update_url = _should_update_subscription_url(
             request.url.path,
             sub_id,
@@ -53,7 +54,21 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
         )
         return response
 
-    for route in _subscription_routes(settings):
+    async def subscription(request: Request, sub_id: str, accept: str | None = Header(default=None)) -> Response:
+        return await respond(request, sub_id, accept, abroad=False)
+
+    async def abroad_subscription(
+        request: Request,
+        sub_id: str,
+        accept: str | None = Header(default=None),
+    ) -> Response:
+        return await respond(request, sub_id, accept, abroad=True)
+
+    routes = _subscription_routes(settings)
+    # Abroad routes go first: the catch-all {sub_id:path} would otherwise swallow the suffix.
+    for route in routes:
+        router.add_api_route(f"{route}{{sub_id}}{ABROAD_PATH_SUFFIX}", abroad_subscription, methods=["GET"])
+    for route in routes:
         router.add_api_route(f"{route}{{sub_id:path}}", subscription, methods=["GET"])
     return router
 
@@ -91,9 +106,11 @@ def _attach_subscription_headers(
 async def _build_subscription_or_404(
     subscription_service: SubscriptionService,
     sub_id: str,
+    *,
+    abroad: bool,
 ) -> BuiltSubscription:
     try:
-        return await subscription_service.build(sub_id)
+        return await subscription_service.build(sub_id, abroad=abroad)
     except UnknownSubscriptionClientError as exc:
         raise HTTPException(status_code=404, detail="subscription not found") from exc
 

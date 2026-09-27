@@ -25,6 +25,7 @@ from vpn_control_plane.telegram.bot import (
     configure_bot_commands,
     configure_chat_commands,
     generate_qr_png,
+    handle_abroad,
     handle_announce,
     handle_backup,
     handle_help,
@@ -227,12 +228,13 @@ async def test_configure_bot_commands_sets_default_and_admin_scoped_menus(tmp_pa
 
     await configure_bot_commands(cast(Any, bot), settings(tmp_path))
 
-    assert [command.command for command in bot.calls[0]["commands"]] == ["start", "help", "status", "id"]
+    assert [command.command for command in bot.calls[0]["commands"]] == ["start", "abroad", "help", "status", "id"]
     assert bot.calls[0]["scope"].type == "default"
-    assert [command.command for command in bot.calls[1]["commands"]] == ["start", "help", "status", "id"]
+    assert [command.command for command in bot.calls[1]["commands"]] == ["start", "abroad", "help", "status", "id"]
     assert bot.calls[1]["scope"].type == "all_private_chats"
     assert [command.command for command in bot.calls[2]["commands"]] == [
         "start",
+        "abroad",
         "help",
         "status",
         "id",
@@ -254,11 +256,12 @@ async def test_configure_chat_commands_sets_user_specific_scope(tmp_path: Path) 
     await configure_chat_commands(cast(Any, bot), app_settings, 100)
     await configure_chat_commands(cast(Any, bot), app_settings, 1)
 
-    assert [command.command for command in bot.calls[0]["commands"]] == ["start", "help", "status", "id"]
+    assert [command.command for command in bot.calls[0]["commands"]] == ["start", "abroad", "help", "status", "id"]
     assert bot.calls[0]["scope"].type == "chat"
     assert bot.calls[0]["scope"].chat_id == 100
     assert [command.command for command in bot.calls[1]["commands"]] == [
         "start",
+        "abroad",
         "help",
         "status",
         "id",
@@ -331,6 +334,32 @@ async def test_start_provisions_allowed_private_user_and_sends_url_qr_and_instru
     token = build_public_subscription_token("100", "global-salt")
     assert f"https://example.test/s/{token}" in message.photos[0]["kwargs"]["caption"]
     assert message.answers[-1]["kwargs"] == {"parse_mode": "HTML", "disable_web_page_preview": True}
+
+
+@pytest.mark.asyncio
+async def test_abroad_provisions_allowed_user_and_sends_abroad_url(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/abroad", 100)
+
+    await handle_abroad(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.telegram_calls == [{"id": 100, "comment": "Kirill", "username": "resetand"}]
+    token = build_public_subscription_token("100", "global-salt")
+    assert len(message.photos) == 1
+    assert f"https://example.test/s/{token}/abroad" in message.photos[0]["kwargs"]["caption"]
+    assert "вместо" in message.answers[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_abroad_denies_unauthorized_user_without_provisioning(tmp_path: Path) -> None:
+    provisioning = FakeProvisioning()
+    message = FakeMessage("/abroad", 999)
+
+    await handle_abroad(cast(Any, message), services(tmp_path, provisioning))
+
+    assert provisioning.telegram_calls == []
+    assert message.photos == []
+    assert message.answers[-1]["text"] == "Доступ запрещен. Обратитесь к администратору."
 
 
 @pytest.mark.asyncio

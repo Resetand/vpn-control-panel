@@ -38,6 +38,19 @@ def build_setup_instructions() -> str:
     return "\n".join(parts)
 
 
+def build_abroad_instructions() -> str:
+    parts = [
+        "🌍 <b>Ссылка для жизни за границей</b>",
+        "",
+        "В ней выключена маршрутизация: весь трафик идет через выбранный сервер, включая российские сайты.",
+        "",
+        "Установите ее вместо текущей подписки:",
+        "1. Удалите старую подписку в приложении-клиенте",
+        "2. Добавьте эту ссылку — отсканируйте QR или вставьте ее",
+    ]
+    return "\n".join(parts)
+
+
 def _load_recommended_clients() -> dict[str, dict[str, str]]:
     content = files(__package__).joinpath("clients_recommended.json").read_text(encoding="utf-8")
     return cast(dict[str, dict[str, str]], json.loads(content))

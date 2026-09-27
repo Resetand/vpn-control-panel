@@ -789,6 +789,115 @@ async def test_routing_enable_can_disable_configured_happ_routing_rules(tmp_path
     assert response.headers["routing"] == HAPP_ROUTING_RULES
 
 
+@pytest.mark.asyncio
+async def test_abroad_subscription_drops_happ_routing_and_marks_title(tmp_path: Path) -> None:
+    service = service_with_fakes(
+        prepare_store(tmp_path, subscription={"profileTitle": "Family VPN", "routing": HAPP_ROUTING_RULES}),
+        DEFAULT_NODE_LINKS,
+    )
+
+    regular = await service.build("123")
+    abroad = await service.build("123", abroad=True)
+    response = render_subscription_response(abroad)
+
+    assert abroad.links == regular.links
+    assert abroad.public_url == "https://resetand.my.id:2096/sub/123/abroad"
+    assert "routing" not in response.headers
+    assert response.headers["routing-enable"] == "false"
+    assert response.headers["profile-title"] == "base64:" + base64.b64encode(b"Family VPN (Abroad)").decode()
+    assert response.headers["profile-web-page-url"] == "https://resetand.my.id:2096/sub/123/abroad"
+
+
+@pytest.mark.asyncio
+async def test_abroad_subscription_title_without_configured_title(tmp_path: Path) -> None:
+    service = service_with_fakes(prepare_store(tmp_path), DEFAULT_NODE_LINKS)
+
+    response = render_subscription_response(await service.build("123", abroad=True))
+
+    assert response.headers["profile-title"] == "base64:" + base64.b64encode(b"Abroad").decode()
+
+
+@pytest.mark.asyncio
+async def test_abroad_subscription_title_extends_base64_encoded_title(tmp_path: Path) -> None:
+    encoded_title = "base64:" + base64.b64encode("Семья".encode()).decode()
+    service = service_with_fakes(
+        prepare_store(tmp_path, subscription={"profileTitle": encoded_title}), DEFAULT_NODE_LINKS
+    )
+
+    response = render_subscription_response(await service.build("123", abroad=True))
+
+    assert response.headers["profile-title"] == "base64:" + base64.b64encode("Семья (Abroad)".encode()).decode()
+
+
+def abroad_route_settings(tmp_path: Path) -> Settings:
+    return Settings.model_validate(
+        {
+            "VPN_DATA_FILE": str(tmp_path / "data.json"),
+            "VPN_SUBSCRIPTION_ROUTE": "/s/",
+            "VPN_SUBSCRIPTION_LEGACY_ROUTES": "/sub/,/sub/9f3aKx7PqLm2Zr8/",
+            "VPN_SUBSCRIPTION_DOMAIN": "example.test",
+            "VPN_SUBSCRIPTION_PORT": "443",
+            "VPN_SUBSCRIPTION_TOKEN_SALT": "global-salt",
+            "VPN_TELEGRAM_BOT_TOKEN": "token",
+            "VPN_TELEGRAM_ADMIN_IDS": "1",
+        }
+    )
+
+
+def abroad_route_client(tmp_path: Path) -> TestClient:
+    store = prepare_store(
+        tmp_path,
+        clients=[{"id": "123", "comment": "Existing", "subId": "personal-token", "legacySubId": "123"}],
+        inbounds=[{"label": "Germany", "uri": "vless://external#Germany"}],
+        subscription={"profileTitle": "Family VPN", "routing": HAPP_ROUTING_RULES},
+    )
+    app = FastAPI()
+    app.include_router(create_router(abroad_route_settings(tmp_path), store))
+    return TestClient(app)
+
+
+def test_abroad_route_serves_same_links_without_routing(tmp_path: Path) -> None:
+    client = abroad_route_client(tmp_path)
+    token = build_public_subscription_token("personal-token", "global-salt")
+
+    regular = client.get(f"/s/{token}")
+    abroad = client.get(f"/s/{token}/abroad")
+
+    assert abroad.status_code == 200
+    assert abroad.text == regular.text
+    assert "routing" not in abroad.headers
+    assert abroad.headers["routing-enable"] == "false"
+    assert "new-url" not in abroad.headers
+    assert regular.headers["routing"] == HAPP_ROUTING_RULES
+
+
+def test_abroad_route_points_legacy_url_to_canonical_abroad_url(tmp_path: Path) -> None:
+    client = abroad_route_client(tmp_path)
+    token = build_public_subscription_token("personal-token", "global-salt")
+    abroad_url = f"https://example.test/s/{token}/abroad"
+
+    plain = client.get("/sub/9f3aKx7PqLm2Zr8/123/abroad")
+    unhashed = client.get("/s/personal-token/abroad")
+    html = client.get("/sub/123/abroad", headers={"accept": "text/html"}, follow_redirects=False)
+
+    assert plain.status_code == 200
+    assert plain.headers["new-url"] == abroad_url
+    assert "routing" not in plain.headers
+    assert unhashed.headers["new-url"] == abroad_url
+    assert html.status_code == 302
+    assert html.headers["location"] == abroad_url
+
+
+def test_abroad_route_json_view_exposes_abroad_url_and_title(tmp_path: Path) -> None:
+    client = abroad_route_client(tmp_path)
+    token = build_public_subscription_token("personal-token", "global-salt")
+
+    payload = client.get(f"/s/{token}/abroad", headers={"accept": "application/json"}).json()
+
+    assert payload["subscription"]["public_url"] == f"https://example.test/s/{token}/abroad"
+    assert payload["subscription"]["title"] == "Family VPN (Abroad)"
+
+
 def test_subscription_route_returns_404_for_unknown_client(tmp_path: Path) -> None:
     store = prepare_store(tmp_path, clients=[])
     settings = Settings.model_validate(

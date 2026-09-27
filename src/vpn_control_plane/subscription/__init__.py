@@ -1,4 +1,5 @@
 from vpn_control_plane.subscription.service import (
+    ABROAD_PATH_SUFFIX,
     BuiltSubscription,
     SubscriptionError,
     SubscriptionService,
@@ -15,6 +16,7 @@ from vpn_control_plane.subscription.service import (
 )
 
 __all__ = [
+    "ABROAD_PATH_SUFFIX",
     "BuiltSubscription",
     "SubscriptionError",
     "SubscriptionService",
