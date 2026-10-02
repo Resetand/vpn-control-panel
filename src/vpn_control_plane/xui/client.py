@@ -287,14 +287,14 @@ class XuiNodeClient:
             raise XuiApiError(f"3x-UI {operation} failed for node {self.node.id}: {_api_message(resp_body)}")
 
     async def _request(self, method: str, path: str, *, operation: str, **kwargs: Any) -> httpx.Response:
-        logger.info("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
+        logger.debug("Starting 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
         kwargs = self._with_auth_headers(kwargs)
         try:
             response = await self._client.request(method, self._url(path), **kwargs)
         except Exception:
             logger.exception("3x-UI operation failed", extra={"node_id": self.node.id, "operation": operation})
             raise
-        logger.info("Finished 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
+        logger.debug("Finished 3x-UI operation", extra={"node_id": self.node.id, "operation": operation})
         return response
 
     def _with_auth_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:

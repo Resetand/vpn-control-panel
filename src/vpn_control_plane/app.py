@@ -89,6 +89,17 @@ def _log_background_task_failure(name: str, task: asyncio.Task[None]) -> None:
         )
 
 
-def main() -> None:
+# Third-party HTTP loggers emit one INFO line per request, including panel URLs with
+# their non-default paths. Keep them quiet unless something goes wrong.
+NOISY_LOGGERS = ("httpx", "httpcore")
+
+
+def configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    for name in NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def main() -> None:
+    configure_logging()
     uvicorn.run("vpn_control_plane.app:create_app", factory=True, host="0.0.0.0", port=8080)
