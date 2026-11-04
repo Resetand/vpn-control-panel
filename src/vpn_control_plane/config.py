@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     )
     subscription_cert_path: Path = Field(default=Path("./certs"), validation_alias="VPN_SUBSCRIPTION_CERT_PATH")
     telegram_bot_token: SecretStr = Field(validation_alias="VPN_TELEGRAM_BOT_TOKEN")
+    # Credentials live in the URL, so keep it out of reprs and logs.
+    telegram_proxy_url: SecretStr | None = Field(default=None, validation_alias="VPN_TELEGRAM_PROXY_URL")
     telegram_allowed_user_ids: Annotated[set[str] | None, NoDecode] = Field(
         default_factory=set,
         validation_alias="VPN_TELEGRAM_ALLOWED_USER_IDS",
@@ -153,6 +155,13 @@ class Settings(BaseSettings):
     @classmethod
     def parse_id_set(cls, value: object) -> set[str]:
         return _split_csv(value)
+
+    @field_validator("telegram_proxy_url", mode="before")
+    @classmethod
+    def parse_optional_proxy_url(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("telegram_allowed_chat_id", mode="before")
     @classmethod

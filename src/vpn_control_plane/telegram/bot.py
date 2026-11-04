@@ -9,6 +9,7 @@ from io import BytesIO
 
 import qrcode  # type: ignore[import-untyped]
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -103,7 +104,11 @@ def is_plain_text_message(message: Message) -> bool:
 
 
 def create_bot(settings: Settings) -> Bot:
-    return Bot(token=settings.telegram_bot_token.get_secret_value())
+    token = settings.telegram_bot_token.get_secret_value()
+    if settings.telegram_proxy_url is None:
+        return Bot(token=token)
+    # aiohttp ignores HTTPS_PROXY by default, so the proxy has to be wired into the session.
+    return Bot(token=token, session=AiohttpSession(proxy=settings.telegram_proxy_url.get_secret_value()))
 
 
 async def run_telegram_bot(settings: Settings, store: ControlPlaneStore) -> None:

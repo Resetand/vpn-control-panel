@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import json
 import tarfile
 from io import BytesIO
@@ -10,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 from aiogram.enums import ChatMemberStatus
+from pydantic import SecretStr
 
 import vpn_control_plane.backup.secrets as backup_secrets
 from vpn_control_plane.backup import build_data_backup
@@ -24,6 +27,7 @@ from vpn_control_plane.telegram.bot import (
     command_argument,
     configure_bot_commands,
     configure_chat_commands,
+    create_bot,
     generate_qr_png,
     handle_abroad,
     handle_announce,
@@ -67,6 +71,7 @@ def settings(
     *,
     backup_secrets_ssh_key: str | None = None,
     backup_secrets_env_file: Path | None = None,
+    telegram_proxy_url: str | None = None,
 ) -> Settings:
     values = {
         "VPN_DATA_FILE": str(tmp_path / "data.json"),
@@ -82,6 +87,8 @@ def settings(
         values["BACKUP_SECRETS_SSH_KEY"] = backup_secrets_ssh_key
     if backup_secrets_env_file is not None:
         values["BACKUP_SECRETS_ENV_FILE"] = str(backup_secrets_env_file)
+    if telegram_proxy_url is not None:
+        values["VPN_TELEGRAM_PROXY_URL"] = telegram_proxy_url
     return Settings.model_validate(values)
 
 
@@ -584,3 +591,51 @@ async def test_set_routing_rejects_missing_or_invalid_routing_without_mutating_s
             "kwargs": {},
         }
     ]
+
+
+async def serve_one_socks5_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> dict[str, object]:
+    """Speak just enough SOCKS5 (RFC 1928/1929) to record the auth and CONNECT target, then refuse."""
+    _version, method_count = await reader.readexactly(2)
+    await reader.readexactly(method_count)
+    writer.write(b"\x05\x02")  # username/password auth
+    _auth_version, username_length = await reader.readexactly(2)
+    username = (await reader.readexactly(username_length)).decode()
+    (password_length,) = await reader.readexactly(1)
+    password = (await reader.readexactly(password_length)).decode()
+    writer.write(b"\x01\x00")
+    _version, _command, _reserved, address_type = await reader.readexactly(4)
+    assert address_type == 3, "the hostname must be resolved by the proxy, not by the client"
+    (host_length,) = await reader.readexactly(1)
+    host = (await reader.readexactly(host_length)).decode()
+    port = int.from_bytes(await reader.readexactly(2), "big")
+    writer.write(b"\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00")  # connection not allowed
+    await writer.drain()
+    writer.close()
+    return {"username": username, "password": password, "host": host, "port": port}
+
+
+@pytest.mark.asyncio
+async def test_create_bot_sends_requests_through_configured_proxy(tmp_path: Path) -> None:
+    seen: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        seen.set_result(await serve_one_socks5_connect(reader, writer))
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    proxied_settings = settings(tmp_path, telegram_proxy_url=f"socks5://tg:secret@127.0.0.1:{port}")
+    bot = create_bot(proxied_settings.model_copy(update={"telegram_bot_token": SecretStr("123456:test-token")}))
+    try:
+        # The fake proxy refuses CONNECT; only what reached it matters here.
+        with contextlib.suppress(Exception):
+            await bot.get_me()
+    finally:
+        await bot.session.close()
+        server.close()
+
+    assert await asyncio.wait_for(seen, timeout=5) == {
+        "username": "tg",
+        "password": "secret",
+        "host": "api.telegram.org",
+        "port": 443,
+    }

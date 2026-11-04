@@ -8,6 +8,7 @@ from aiogram.types import BufferedInputFile
 from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import ControlPlaneStore
+from vpn_control_plane.telegram import create_bot
 
 logger = logging.getLogger(__name__)
 REPORT_CAPTION = "Автоматический report: бекап control-plane, секретов и 3x-UI нод."
@@ -29,7 +30,7 @@ async def send_telegram_backup_report(settings: Settings, store: ControlPlaneSto
 
 
 async def send_telegram_backup_report_to_admins(settings: Settings, store: ControlPlaneStore) -> None:
-    bot = _create_bot(settings)
+    bot = create_bot(settings)
     try:
         try:
             await send_telegram_backup_report(settings, store, bot)
@@ -37,7 +38,3 @@ async def send_telegram_backup_report_to_admins(settings: Settings, store: Contr
             logger.exception("Telegram report failed while encrypting secrets backup")
     finally:
         await bot.session.close()
-
-
-def _create_bot(settings: Settings) -> Bot:
-    return Bot(token=settings.telegram_bot_token.get_secret_value())

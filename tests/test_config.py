@@ -115,3 +115,15 @@ def test_settings_monitoring_rejects_invalid_values() -> None:
                 "VPN_MONITORING_CPU_THRESHOLD_PERCENT": "101",
             }
         )
+
+
+def test_settings_telegram_proxy_url_is_optional_and_secret() -> None:
+    base = {"VPN_TELEGRAM_BOT_TOKEN": "token", "VPN_TELEGRAM_ADMIN_IDS": "1"}
+
+    assert Settings.model_validate({**base, "VPN_TELEGRAM_PROXY_URL": ""}).telegram_proxy_url is None
+
+    settings = Settings.model_validate({**base, "VPN_TELEGRAM_PROXY_URL": "socks5://user:p4ss@proxy.test:1080"})
+
+    assert settings.telegram_proxy_url is not None
+    assert settings.telegram_proxy_url.get_secret_value() == "socks5://user:p4ss@proxy.test:1080"
+    assert "p4ss" not in repr(settings)

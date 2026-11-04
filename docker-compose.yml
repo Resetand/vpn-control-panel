@@ -7,6 +7,9 @@ services:
       - ${VPN_ENV_FILE:-.env}
     environment:
       VPN_DATA_FILE: ${VPN_CONTAINER_DATA_FILE:-/app/data/data.json}
+    extra_hosts:
+      # Lets VPN_TELEGRAM_PROXY_URL point at a proxy running on the Docker host.
+      - "host.docker.internal:host-gateway"
     ports:
       - "${VPN_HOST_HTTP_BIND:-127.0.0.1}:${VPN_HOST_HTTP_PORT:-8080}:8080"
     volumes:

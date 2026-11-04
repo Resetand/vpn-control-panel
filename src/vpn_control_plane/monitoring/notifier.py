@@ -5,6 +5,7 @@ import logging
 from aiogram import Bot
 
 from vpn_control_plane.config import Settings
+from vpn_control_plane.telegram import create_bot
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class TelegramAlertNotifier:
     def __init__(self, settings: Settings, bot: Bot | None = None) -> None:
         self._settings = settings
         self._owns_bot = bot is None
-        self._bot = bot or Bot(token=settings.telegram_bot_token.get_secret_value())
+        self._bot = bot or create_bot(settings)
 
     async def send_alert(self, message: str) -> None:
         for admin_id_text in sorted(self._settings.admin_telegram_ids):
