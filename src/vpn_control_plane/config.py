@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     backup_http_token: SecretStr | None = Field(default=None, validation_alias="BACKUP_HTTP_TOKEN")
     backup_secrets_ssh_key: str | None = Field(default=None, validation_alias="BACKUP_SECRETS_SSH_KEY")
     backup_secrets_env_file: Path = Field(default=Path(".env"), validation_alias="BACKUP_SECRETS_ENV_FILE")
+    # Files other services leave for the full backup; added to the archive as is.
+    backup_include_dir: Path | None = Field(default=None, validation_alias="BACKUP_INCLUDE_DIR")
     report_telegram_enabled: bool = Field(default=False, validation_alias="REPORT_TELEGRAM_ENABLED")
     report_telegram_schedule: str = Field(default="0 3 * * *", validation_alias="REPORT_TELEGRAM_SCHEDULE")
     geofiles_update_enabled: bool = Field(default=False, validation_alias="GEOFILES_UPDATE_ENABLED")

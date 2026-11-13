@@ -309,6 +309,7 @@ async def handle_backup(message: Message, services: TelegramBotServices, bot: Bo
             services.store.load_nodes(),
             env_file=services.settings.backup_secrets_env_file,
             ssh_public_key=services.settings.backup_secrets_ssh_key,
+            include_dir=services.settings.backup_include_dir,
         )
     except SecretsBackupError:
         logger.exception("Secrets backup failed")

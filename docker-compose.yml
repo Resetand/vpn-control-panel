@@ -7,6 +7,7 @@ services:
       - ${VPN_ENV_FILE:-.env}
     environment:
       VPN_DATA_FILE: ${VPN_CONTAINER_DATA_FILE:-/app/data/data.json}
+      BACKUP_INCLUDE_DIR: /app/backup-include
     extra_hosts:
       # Lets VPN_TELEGRAM_PROXY_URL point at a proxy running on the Docker host.
       - "host.docker.internal:host-gateway"
@@ -15,6 +16,7 @@ services:
     volumes:
       - ${VPN_ENV_FILE:-.env}:/app/.env:ro
       - ${VPN_HOST_DATA_DIR:-.}:/app/data
+      - ${BACKUP_INCLUDE_HOST_DIR:-./backup-include}:/app/backup-include:ro
     restart: unless-stopped
 
   nginx:

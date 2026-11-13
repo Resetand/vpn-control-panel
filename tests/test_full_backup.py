@@ -74,6 +74,7 @@ async def test_build_control_plane_backup_contains_data_encrypted_env_and_node_f
     with tarfile.open(fileobj=BytesIO(backup), mode="r:gz") as archive:
         names = sorted(archive.getnames())
         assert names == [
+            "README.md",
             "data.json",
             "env.encrypted",
             "eu.example.test-1-x-ui.db",
@@ -88,3 +89,38 @@ async def test_build_control_plane_backup_contains_data_encrypted_env_and_node_f
         assert encrypted_env.read() == b"encrypted-env"
         assert database.read() == b"db-1"
         assert config.read() == b"config-1"
+
+
+@pytest.mark.asyncio
+async def test_build_control_plane_backup_carries_included_files_verbatim(tmp_path: Path) -> None:
+    include_dir = tmp_path / "include"
+    (include_dir / "monitoring").mkdir(parents=True)
+    (include_dir / "monitoring" / "state.tar.age").write_bytes(b"\x00encrypted")
+    (include_dir / "monitoring" / "RESTORE.md").write_text("restore steps", encoding="utf-8")
+    (include_dir / "monitoring" / ".state.tar.age.tmp").write_bytes(b"half-written")
+    (include_dir / ".partial").mkdir()
+    (include_dir / ".partial" / "file").write_bytes(b"half-written")
+
+    backup = await build_control_plane_backup(tmp_path / "data.json", [], include_dir=include_dir)
+
+    with tarfile.open(fileobj=BytesIO(backup), mode="r:gz") as archive:
+        assert sorted(archive.getnames()) == ["README.md", "monitoring/RESTORE.md", "monitoring/state.tar.age"]
+        included = archive.extractfile("monitoring/state.tar.age")
+        readme = archive.extractfile("README.md")
+        assert included is not None
+        assert readme is not None
+        assert included.read() == b"\x00encrypted"
+        readme_text = readme.read().decode("utf-8")
+    assert "`monitoring/state.tar.age`" in readme_text
+    assert "`monitoring/RESTORE.md`" in readme_text
+
+
+@pytest.mark.asyncio
+async def test_build_control_plane_backup_without_include_dir_has_only_its_own_files(tmp_path: Path) -> None:
+    backup = await build_control_plane_backup(tmp_path / "data.json", [], include_dir=tmp_path / "missing")
+
+    with tarfile.open(fileobj=BytesIO(backup), mode="r:gz") as archive:
+        assert archive.getnames() == ["README.md"]
+        readme = archive.extractfile("README.md")
+        assert readme is not None
+        assert "Included from other services" not in readme.read().decode("utf-8")

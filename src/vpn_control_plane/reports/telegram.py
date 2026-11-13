@@ -20,6 +20,7 @@ async def send_telegram_backup_report(settings: Settings, store: ControlPlaneSto
         store.load_nodes(),
         env_file=settings.backup_secrets_env_file,
         ssh_public_key=settings.backup_secrets_ssh_key,
+        include_dir=settings.backup_include_dir,
     )
     for admin_id in sorted(settings.admin_telegram_ids):
         await bot.send_document(

@@ -128,6 +128,8 @@ sed -i "s|^BACKUP_SECRETS_SSH_KEY=.*|BACKUP_SECRETS_SSH_KEY=\"$(head -n 1 ~/.ssh
 
 The key is public. The encrypted `env.encrypted` file can be decrypted only with the matching private key.
 
+The full backup (Telegram `/backup` and the scheduled report) starts with a `README.md` that lists its files and how to restore each. Other services on the host can ride along: set `BACKUP_INCLUDE_HOST_DIR` to a host directory, and every file under it is added to the archive verbatim under its relative path (for example `monitoring/...`). The app mounts it read-only and never interprets the files, so each service encrypts its own secrets and ships its own restore guide. Dot-prefixed entries are skipped, which lets a producer write a temp file and rename it. Unset, the stack mounts an empty `./backup-include` and the archive has no extra files.
+
 Restore data from backup, or edit `data.json` manually:
 
 ```bash
