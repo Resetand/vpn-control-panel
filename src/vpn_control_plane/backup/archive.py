@@ -148,7 +148,11 @@ def _part_created(name: str, included: Sequence[tuple[str, Path]]) -> str:
         if path.name == MANIFEST_FILE_NAME:
             for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
                 if line.startswith("created_utc="):
-                    return line.removeprefix("created_utc=")
+                    value = line.removeprefix("created_utc=")
+                    try:
+                        return f"{datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ'):%Y-%m-%d %H:%M} UTC"
+                    except ValueError:
+                        return value
     newest = max(path.stat().st_mtime for path in files)
     return f"{datetime.fromtimestamp(newest, UTC):%Y-%m-%d %H:%M} UTC (file time)"
 

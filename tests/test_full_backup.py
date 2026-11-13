@@ -139,7 +139,7 @@ async def test_full_backup_has_uniform_parts_and_decrypts_with_the_key_found_in_
     assert "nodes=eu.example.test-1\n" in manifest
     readme = (root / "README.md").read_text(encoding="utf-8")
     assert "`control-plane/`, snapshot 2026-11-13 00:10 UTC" in readme
-    assert "`monitoring/`, snapshot 2026-11-12T23:04:00Z" in readme
+    assert "`monitoring/`, snapshot 2026-11-12 23:04 UTC" in readme
 
     result = run_decrypt(root, home)
 
