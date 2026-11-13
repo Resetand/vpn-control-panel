@@ -38,8 +38,9 @@ CMD ["vpn-control-plane"]
 # ── dev / CI image ────────────────────────────────────────────────────────────
 FROM base AS dev
 
+# openssh-client: tests run the backup's decrypt.sh, which matches keys with ssh-keygen.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends age \
+    && apt-get install -y --no-install-recommends age openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Venv outside /app so the .:/app volume mount never shadows installed packages.

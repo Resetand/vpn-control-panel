@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from vpn_control_plane.backup import FullBackup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import ControlPlaneStore
 from vpn_control_plane.reports.schedule import CronScheduleError, next_cron_time, validate_cron_expression
@@ -39,14 +40,14 @@ async def test_send_telegram_backup_report_sends_archive_to_every_admin(
     )
     sent: list[dict[str, Any]] = []
 
-    async def fake_build_backup(*_args: object, **_kwargs: object) -> bytes:
-        return b"backup-archive"
+    async def fake_build_backup(*_args: object, **_kwargs: object) -> FullBackup:
+        return FullBackup(file_name="vpn-backup-20261113-0010.tar.gz", content=b"backup-archive")
 
     class FakeBot:
         async def send_document(self, **kwargs: Any) -> None:
             sent.append(kwargs)
 
-    monkeypatch.setattr("vpn_control_plane.reports.telegram.build_control_plane_backup", fake_build_backup)
+    monkeypatch.setattr("vpn_control_plane.reports.telegram.build_full_backup", fake_build_backup)
     (tmp_path / "data.json").write_text(
         json.dumps(
             {
@@ -63,5 +64,5 @@ async def test_send_telegram_backup_report_sends_archive_to_every_admin(
     await send_telegram_backup_report(settings, ControlPlaneStore(tmp_path / "data.json"), cast(Any, FakeBot()))
 
     assert [item["chat_id"] for item in sent] == [1, 2]
-    assert [item["document"].filename for item in sent] == ["vpn-control-plane-backup.tar.gz"] * 2
+    assert [item["document"].filename for item in sent] == ["vpn-backup-20261113-0010.tar.gz"] * 2
     assert [item["caption"] for item in sent] == [REPORT_CAPTION] * 2

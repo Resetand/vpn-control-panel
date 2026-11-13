@@ -21,6 +21,7 @@ from vpn_control_plane.data import ClientRecord, ControlPlaneStore
 from vpn_control_plane.provisioning import ProvisioningResult
 from vpn_control_plane.subscription import SubscriptionService, build_public_subscription_token
 from vpn_control_plane.telegram.bot import (
+    BACKUP_CAPTION,
     DEFAULT_MANUAL_CLIENT_COMMENT,
     HELP_TEXT,
     TelegramBotServices,
@@ -512,8 +513,8 @@ async def test_announce_is_admin_only_and_requires_text(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_backup_is_admin_only_private_and_sends_archive(tmp_path: Path) -> None:
-    bot_services = services(tmp_path)
+async def test_backup_is_admin_only_private_and_reports_a_missing_backup_key(tmp_path: Path) -> None:
+    bot_services = services(tmp_path, app_settings=settings(tmp_path, backup_secrets_ssh_key=""))
     non_admin_message = FakeMessage("/backup", 100)
     group_message = FakeMessage("/backup", 1, chat_type="group")
     admin_message = FakeMessage("/backup", 1)
@@ -528,13 +529,12 @@ async def test_backup_is_admin_only_private_and_sends_archive(tmp_path: Path) ->
     assert group_message.answers == [
         {"text": "Напишите мне в личные сообщения, чтобы получить VPN-доступ.", "kwargs": {}}
     ]
-    assert len(admin_message.documents) == 1
-    assert admin_message.documents[0]["document"].filename == "vpn-control-plane-backup.tar.gz"
-    assert admin_message.documents[0]["kwargs"] == {"caption": "Бекап control-plane, секретов и 3x-UI нод."}
+    assert admin_message.documents == []
+    assert admin_message.answers == [{"text": "Бекап не собран: BACKUP_SECRETS_SSH_KEY is not set", "kwargs": {}}]
 
 
 @pytest.mark.asyncio
-async def test_backup_sends_encrypted_secrets_archive_when_ssh_key_is_configured(
+async def test_backup_sends_encrypted_archive_when_ssh_key_is_configured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -552,8 +552,8 @@ async def test_backup_sends_encrypted_secrets_archive_when_ssh_key_is_configured
     await handle_backup(cast(Any, admin_message), bot_services)
 
     assert len(admin_message.documents) == 1
-    assert admin_message.documents[0]["document"].filename == "vpn-control-plane-backup.tar.gz"
-    assert admin_message.documents[0]["kwargs"] == {"caption": "Бекап control-plane, секретов и 3x-UI нод."}
+    assert admin_message.documents[0]["document"].filename.startswith("vpn-backup-")
+    assert admin_message.documents[0]["kwargs"] == {"caption": BACKUP_CAPTION}
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,7 @@ Every subscription also has an abroad variant at `<subscription route>abroad/<to
 
 Telegram Bot API traffic goes direct by default. Set `VPN_TELEGRAM_PROXY_URL` to a `socks5://`, `socks4://` or `http://` proxy URL (credentials inline, for example `socks5://user:password@host.docker.internal:1080`) to send the bot, reports and monitoring alerts through it, for hosts where Telegram is blocked. The proxy resolves `api.telegram.org` itself. The app container maps `host.docker.internal` to the Docker host, so the proxy can run there; keep its port closed to the outside.
 
-Telegram reports are disabled by default. Set `REPORT_TELEGRAM_ENABLED=true` and `REPORT_TELEGRAM_SCHEDULE` to a five-field crontab expression such as `0 3 * * *` to send an automatic `vpn-control-plane-backup.tar.gz` report to every `VPN_TELEGRAM_ADMIN_IDS` user. The scheduler runs inside the app container started by `make up`.
+Telegram reports are disabled by default. Set `REPORT_TELEGRAM_ENABLED=true` and `REPORT_TELEGRAM_SCHEDULE` to a five-field crontab expression such as `0 3 * * *` to send an automatic full backup (see below) to every `VPN_TELEGRAM_ADMIN_IDS` user. The scheduler runs inside the app container started by `make up`.
 
 3x-UI geofiles updates are disabled by default. Set `GEOFILES_UPDATE_ENABLED=true` and `GEOFILES_UPDATE_SCHEDULE` to update geofiles on every configured node on a schedule. The job calls `panel/api/server/updateGeofile` and also tries `panel/api/custom-geo/update-all`; nodes that do not have the custom geofiles endpoint are skipped for that part. All app cron schedules are evaluated in UTC by the app container.
 
@@ -120,15 +120,27 @@ When a subscription client is missing from an XUI inbound, `xuiFallbackClientEma
 
 The app sends `Authorization: Bearer <token>` to `/panel/api/*` for every node request. Missing environment variables in JSON templates fail during startup, so token configuration errors are visible before the first API call.
 
-To enable encrypted secrets backups, put an SSH public key into `.env`. A quick way to use the first authorized key on the server is:
+The full backup (Telegram `/backup` and the scheduled report) needs an SSH public key in `.env`: everything secret in it is encrypted with `age` to that key. A quick way to use the first authorized key on the server is:
 
 ```bash
 sed -i "s|^BACKUP_SECRETS_SSH_KEY=.*|BACKUP_SECRETS_SSH_KEY=\"$(head -n 1 ~/.ssh/authorized_keys | tr -d '\n')\"|" .env
 ```
 
-The key is public. The encrypted `env.encrypted` file can be decrypted only with the matching private key.
+The key is public; only the matching private key decrypts the backup. Without the key the bot answers `/backup` with an error instead of sending secrets in the clear.
 
-The full backup (Telegram `/backup` and the scheduled report) starts with a `README.md` that lists its files and how to restore each. Other services on the host can ride along: set `BACKUP_INCLUDE_HOST_DIR` to a host directory, and every file under it is added to the archive verbatim under its relative path (for example `monitoring/...`). The app mounts it read-only and never interprets the files, so each service encrypts its own secrets and ships its own restore guide. Dot-prefixed entries are skipped, which lets a producer write a temp file and rename it. Unset, the stack mounts an empty `./backup-include` and the archive has no extra files.
+The archive `vpn-backup-<UTC time>.tar.gz` unpacks into one directory:
+
+```text
+README.md         parts, their snapshot times, how to decrypt
+decrypt.sh        decrypts every part; finds the matching key in ~/.ssh or takes -i <key>
+control-plane/    manifest.txt, RESTORE.md, state.tar.gz.age (data.json, .env,
+                  external_subscriptions.resolved.json, nodes/<host>-<id>-x-ui.db and -xray-config.json)
+<other parts>/    the same three files, left by other services
+```
+
+Every part follows one contract: `manifest.txt` (key=value, no secrets; `created_utc` and `recipient_fingerprint` of the key), `RESTORE.md`, and `state.tar.gz.age` (a tar.gz encrypted with `age` to the SSH key). `sh decrypt.sh` turns each into `<part>/state/`; the part's `RESTORE.md` says what to do next. The control-plane guide is `src/vpn_control_plane/backup/assets/RESTORE.md`.
+
+Other services on the host can ride along: set `BACKUP_INCLUDE_HOST_DIR` to a host directory where each service keeps its part, and everything under it is added to the archive verbatim. The app mounts it read-only and never interprets the files. Dot-prefixed entries are skipped, which lets a producer write a temp file and rename it; names the control plane uses itself are skipped too. Unset, the stack mounts an empty `./backup-include` and the archive has only the control-plane part.
 
 Restore data from backup, or edit `data.json` manually:
 
@@ -179,16 +191,9 @@ make backup-data
 make backup-secrets
 ```
 
-`make backup-secrets` creates `backups/env.encrypted` only when `BACKUP_SECRETS_SSH_KEY` is set. The Telegram `/backup` command sends one `vpn-control-plane-backup.tar.gz` archive containing `project root`, `env.encrypted` when the key is configured, and 3x-UI node files named `<node_host>-<node_id>-x-ui.db` and `<node_host>-<node_id>-xray-config.json`.
+`make backup-secrets` creates `backups/env.encrypted` only when `BACKUP_SECRETS_SSH_KEY` is set. To restore from the full Telegram backup, unpack it on a machine with the matching private key and `age` (`brew install age`), run `sh decrypt.sh`, and follow `control-plane/RESTORE.md`.
 
-Restore `.env` from `vpn-control-plane-backup.tar.gz` on a local machine that has the matching private key. On macOS with `age` installed:
-
-```bash
-brew install age
-{ [ ! -f .env ] || cp .env ".env.bak.$(date +%Y%m%d-%H%M%S)"; } && tar -xzOf vpn-control-plane-backup.tar.gz env.encrypted | age -d -i ~/.ssh/id_ed25519 | tar -xzOf - .env > .env
-```
-
-The decrypted `env.encrypted` archive contains hidden file `.env`.
+Archives made before the per-part layout (`vpn-control-plane-backup.tar.gz`) have `data.json` and the node files in the clear and `.env` in `env.encrypted`: `age -d -i ~/.ssh/id_ed25519 env.encrypted | tar -xzf -` writes `.env`.
 
 ## External subscriptions
 

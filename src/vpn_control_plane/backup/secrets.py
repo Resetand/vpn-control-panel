@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import subprocess
 import tarfile
 from io import BytesIO
@@ -71,3 +73,14 @@ def _build_env_archive(env_file: Path) -> bytes:
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
         archive.add(env_file, arcname=".env")
     return buffer.getvalue()
+
+
+def ssh_public_key_fingerprint(ssh_public_key: str) -> str:
+    """The `SHA256:...` fingerprint `ssh-keygen -l` prints, so a reader can match it to a private key."""
+    blob = base64.b64decode(ssh_public_key.split()[1])
+    return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+
+
+def ssh_public_key_comment(ssh_public_key: str) -> str:
+    parts = ssh_public_key.split(maxsplit=2)
+    return parts[2].strip() if len(parts) == 3 else ""

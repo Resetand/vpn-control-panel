@@ -21,7 +21,7 @@ from aiogram.types import (
     Message,
 )
 
-from vpn_control_plane.backup import CONTROL_PLANE_BACKUP_FILE_NAME, SecretsBackupError, build_control_plane_backup
+from vpn_control_plane.backup import SecretsBackupError, build_full_backup
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import (
     ControlPlaneStore,
@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MANUAL_CLIENT_COMMENT = "manual"
 HELP_TEXT = "Введите /start, чтобы получить или обновить доступ."
+BACKUP_CAPTION = "Бекап VPN: control plane, 3x-UI ноды, подключённые сервисы. Как восстановить — README.md внутри."
 ROUTING_PREFIXES = ("happ://routing/onadd/", "happ://routing/add/")
 ALLOWED_CHAT_MEMBER_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 USER_BOT_COMMANDS = [
@@ -304,21 +305,22 @@ async def handle_backup(message: Message, services: TelegramBotServices, bot: Bo
         return
 
     try:
-        backup = await build_control_plane_backup(
+        backup = await build_full_backup(
             services.store.data_file,
             services.store.load_nodes(),
-            env_file=services.settings.backup_secrets_env_file,
             ssh_public_key=services.settings.backup_secrets_ssh_key,
+            env_file=services.settings.backup_secrets_env_file,
+            external_subscriptions_file=services.settings.external_subscriptions_resolved_path,
             include_dir=services.settings.backup_include_dir,
         )
-    except SecretsBackupError:
-        logger.exception("Secrets backup failed")
-        await message.answer("Не удалось зашифровать бекап секретов.")
+    except SecretsBackupError as exc:
+        logger.exception("Backup failed")
+        await message.answer(f"Бекап не собран: {exc}")
         return
 
     await message.answer_document(
-        BufferedInputFile(backup, filename=CONTROL_PLANE_BACKUP_FILE_NAME),
-        caption="Бекап control-plane, секретов и 3x-UI нод.",
+        BufferedInputFile(backup.content, filename=backup.file_name),
+        caption=BACKUP_CAPTION,
     )
 
 
