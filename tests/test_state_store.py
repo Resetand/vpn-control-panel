@@ -320,3 +320,54 @@ def test_invalid_serialized_client_is_not_written(tmp_path: Path, monkeypatch: p
 
 def test_subscription_metadata_defaults_are_valid() -> None:
     assert SubscriptionMetadata() == SubscriptionMetadata.model_validate({})
+
+
+def test_probe_client_receives_and_is_provisioned_on_every_inbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    state = valid_state()
+    state["defaultClientInboundTags"] = ["extra"]
+    state["clients"] = [{"id": "probe", "probe": True}]
+    write_json(tmp_path / "data.json", state)
+
+    loaded = ControlPlaneStore(tmp_path / "data.json").load_state()
+
+    assert effective_inbound_tags(loaded, loaded.clients[0]) == ["eu", "extra"]
+    assert provisioned_inbound_tags(loaded, loaded.clients[0]) == ["eu", "extra"]
+
+
+def test_probe_client_rejects_its_own_tag_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    state = valid_state()
+    state["clients"] = [{"id": "probe", "probe": True, "inboundTags": ["eu"]}]
+    write_json(tmp_path / "data.json", state)
+
+    with pytest.raises(StateValidationError, match="probe"):
+        ControlPlaneStore(tmp_path / "data.json").load_state()
+
+
+def test_inbound_labels_must_be_unique_across_nodes_and_external_inbounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    state = valid_state()
+    state["externalInbounds"] = [{"tag": "extra", "label": "EU", "uri": "vless://example#EU"}]
+    write_json(tmp_path / "data.json", state)
+
+    with pytest.raises(StateValidationError, match="duplicate inbound label"):
+        ControlPlaneStore(tmp_path / "data.json").load_state()
+
+
+def test_inbound_flags_default_to_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EU_API_TOKEN", "eu-token")
+    state = valid_state()
+    state["externalInbounds"] = [
+        {"tag": "extra", "label": "Extra", "uri": "vless://example#Extra", "critical": True, "outage": True}
+    ]
+    write_json(tmp_path / "data.json", state)
+
+    loaded = ControlPlaneStore(tmp_path / "data.json").load_state()
+
+    assert (loaded.nodes[0].inbounds[0].critical, loaded.nodes[0].inbounds[0].outage) == (False, False)
+    assert (loaded.external_inbounds[0].critical, loaded.external_inbounds[0].outage) == (True, True)

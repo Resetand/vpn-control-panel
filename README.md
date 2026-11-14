@@ -118,6 +118,13 @@ If your JSON data uses `${{ env.VAR_NAME }}` templates, define those variables i
 
 When a subscription client is missing from an XUI inbound, `xuiFallbackClientEmail` can point it to a shared fallback client. Configure it on a node to apply to all node inbounds, or on a specific inbound to override the node value. If neither value is set, no configured fallback is used.
 
+Inbound labels are unique: they name an inbound both for people and for monitoring. Any inbound (node or external) may carry two optional flags that monitoring reads instead of guessing from addresses or names:
+
+- `critical: true` — a failure needs attention sooner than on other inbounds;
+- `outage: true` — known not to work, whatever the cause: monitoring stops reporting the failure and watches for recovery. Flags do not change what clients see; a warning mark for people stays part of the label.
+
+A client with `probe: true` is the monitoring probe: it receives every inbound (it must not set `inboundTags` or `abroadInboundTags`), each named by its label, even where an external link carries its own fragment. `GET /catalog/metrics` on the app's local HTTP bind (not published through nginx) exposes one `vpn_inbound_info{tag, name, node, provider, critical, outage}` series per inbound for Prometheus; `name` is the label, `node` the host of an own node, `provider` the external subscription name.
+
 The app sends `Authorization: Bearer <token>` to `/panel/api/*` for every node request. Missing environment variables in JSON templates fail during startup, so token configuration errors are visible before the first API call.
 
 The full backup (Telegram `/backup` and the scheduled report) needs an SSH public key in `.env`: everything secret in it is encrypted with `age` to that key. A quick way to use the first authorized key on the server is:

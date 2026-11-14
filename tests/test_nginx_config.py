@@ -42,6 +42,7 @@ def test_nginx_template_uses_official_envsubst_variables() -> None:
     assert "proxy_pass http://app:8080;" in template
     assert "location /" in template
     assert "/backup" not in template
+    assert "/catalog" not in template
 
 
 def test_nginx_startup_helper_normalizes_subscription_route() -> None:

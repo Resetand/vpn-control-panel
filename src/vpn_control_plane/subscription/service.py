@@ -201,7 +201,9 @@ class SubscriptionService:
                     # external-subscriptions file; an unresolved reference is silently skipped.
                     uri = resolve_reference(external_inbound.uri, resolved_inbounds)
                     if uri and uri.strip():
-                        links.append(_normalize_link(_ensure_fragment_label(uri.strip(), external_inbound.label)))
+                        # The probe must see the label verbatim; people keep an upstream fragment if it has one.
+                        apply_label = _relabel_fragment if client.probe else _ensure_fragment_label
+                        links.append(_normalize_link(apply_label(uri.strip(), external_inbound.label)))
                     continue
 
                 assert isinstance(catalog_inbound, NodeCatalogInbound)

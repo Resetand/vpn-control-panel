@@ -11,7 +11,21 @@ class StateModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class NodeInboundRecord(StateModel):
+# A flag stays out of data.json until it is set, so existing records are written back unchanged.
+def _flag() -> bool:
+    return Field(default=False, exclude_if=lambda flag: not flag)
+
+
+class InboundFlags(StateModel):
+    """What the operator declares about an inbound, as opposed to what monitoring observes."""
+
+    # A failure needs attention sooner than on other inbounds.
+    critical: bool = _flag()
+    # Known not to work, whatever the cause: monitoring stops reporting the failure and watches for recovery.
+    outage: bool = _flag()
+
+
+class NodeInboundRecord(InboundFlags):
     tag: Annotated[str, Field(min_length=1)]
     label: Annotated[str, Field(min_length=1)]
     xui_inbound_id: Annotated[int, Field(ge=1)] = Field(alias="xuiInboundId")
@@ -65,7 +79,7 @@ class NodeRecord(StateModel):
         return _strip_nonempty(value, "xui fallback client email")
 
 
-class ExternalInboundRecord(StateModel):
+class ExternalInboundRecord(InboundFlags):
     tag: Annotated[str, Field(min_length=1)]
     label: Annotated[str, Field(min_length=1)]
     # Either a literal share link (vless://..., wireguard://...) or a reference into an
@@ -121,6 +135,14 @@ class ClientRecord(StateModel):
     legacy_sub_id: str | None = Field(default=None, alias="legacySubId")
     inbound_tags: list[str] | None = Field(default=None, alias="inboundTags")
     abroad_inbound_tags: list[str] | None = Field(default=None, alias="abroadInboundTags")
+    # The monitoring probe: receives every inbound under its label, the name monitoring keys on.
+    probe: bool = _flag()
+
+    @model_validator(mode="after")
+    def validate_probe_tags(self) -> ClientRecord:
+        if self.probe and (self.inbound_tags is not None or self.abroad_inbound_tags is not None):
+            raise ValueError(f"clients[{self.id}] is a probe and receives every inbound; drop its inbound tag lists")
+        return self
 
     @field_validator("id", "telegram_id", "sub_id", "legacy_sub_id")
     @classmethod
@@ -193,6 +215,13 @@ class ControlPlaneState(StateModel):
                 declare(node_inbound.tag)
         for external_inbound in self.external_inbounds:
             declare(external_inbound.tag)
+
+        # The label names the inbound for people and for monitoring, which keys its series on it.
+        seen_labels: set[str] = set()
+        for inbound in [i for node in self.nodes for i in node.inbounds] + list(self.external_inbounds):
+            if inbound.label in seen_labels:
+                raise ValueError(f"duplicate inbound label: {inbound.label!r}")
+            seen_labels.add(inbound.label)
 
         seen_subscriptions: set[str] = set()
         for subscription in self.external_subscriptions:
@@ -267,6 +296,8 @@ def build_inbound_catalog(state: ControlPlaneState) -> dict[str, CatalogInbound]
 
 
 def effective_inbound_tags(state: ControlPlaneState, client: ClientRecord) -> list[str]:
+    if client.probe:
+        return list(build_inbound_catalog(state))
     if client.inbound_tags is not None:
         return list(client.inbound_tags)
     return list(state.default_client_inbound_tags)

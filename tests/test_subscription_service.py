@@ -77,11 +77,13 @@ def build_state(
     for index, item in enumerate(raw_inbounds):
         if "uri" in item:
             tag = str(item.get("tag") or f"external-{index}")
-            external_inbounds.append({"tag": tag, "label": item["label"], "uri": item["uri"]})
+            flags = {key: item[key] for key in ("critical", "outage") if key in item}
+            external_inbounds.append({"tag": tag, "label": item["label"], "uri": item["uri"], **flags})
         else:
             tag = str(item.get("tag") or f"node-{item['nodeId']}-{item['xuiInboundId']}-{index}")
+            flags = {key: item[key] for key in ("critical", "outage") if key in item}
             node_inbounds_by_id[int(item["nodeId"])].append(
-                {"tag": tag, "label": item["label"], "xuiInboundId": item["xuiInboundId"]}
+                {"tag": tag, "label": item["label"], "xuiInboundId": item["xuiInboundId"], **flags}
             )
         default_tags.append(tag)
 
@@ -265,6 +267,28 @@ async def test_external_link_fragment_is_kept_when_present(tmp_path: Path) -> No
     subscription = await service.build("123")
 
     assert subscription.links == ["vless://external#Germany"]
+
+
+@pytest.mark.asyncio
+async def test_probe_client_gets_every_inbound_under_its_label(tmp_path: Path) -> None:
+    probe_email = client_email("probe")
+    service = service_with_fakes(
+        prepare_store(
+            tmp_path,
+            clients=[{"id": "probe", "probe": True}],
+            inbounds=[
+                {"label": "One", "nodeId": 1, "xuiInboundId": 1, "outage": True},
+                {"label": "External", "uri": "vless://external#Upstream name"},
+                {"label": "Two", "nodeId": 1, "xuiInboundId": 2},
+            ],
+        ),
+        {(1, probe_email): [NODE_1_LINK_ONE, NODE_1_LINK_TWO]},
+    )
+
+    subscription = await service.build("probe")
+
+    # Catalog order: node inbounds first, then external ones.
+    assert subscription.links == [NODE_1_LINK_ONE, NODE_1_LINK_TWO, "vless://external#External"]
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from vpn_control_plane.backup import DATA_BACKUP_FILE_NAME, build_data_backup
+from vpn_control_plane.catalog_metrics import CONTENT_TYPE as CATALOG_METRICS_CONTENT_TYPE
+from vpn_control_plane.catalog_metrics import render_inbound_info
 from vpn_control_plane.config import Settings
 from vpn_control_plane.data import ControlPlaneStore
 from vpn_control_plane.subscription import (
@@ -33,6 +35,11 @@ def create_router(settings: Settings, store: ControlPlaneStore) -> APIRouter:
     async def backup(authorization: str | None = Header(default=None)) -> Response:
         _authorize_backup(settings, authorization)
         return _backup_response(store)
+
+    # Served on the app port only: nginx publishes subscription routes and answers 404 to the rest.
+    @router.get("/catalog/metrics")
+    async def catalog_metrics() -> Response:
+        return Response(render_inbound_info(store.load_state()), media_type=CATALOG_METRICS_CONTENT_TYPE)
 
     async def respond(request: Request, sub_id: str, accept: str | None, *, abroad: bool) -> Response:
         built_subscription = await _build_subscription_or_404(subscription_service, sub_id, abroad=abroad)
